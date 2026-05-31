@@ -32,6 +32,8 @@ public class HumanController : MonoBehaviour
 
     LineRenderer aim;
     LineRenderer landMarker;
+    LineRenderer dropLine;     // thin vertical line from the disc down to the ground
+    LineRenderer shadowRing;   // ring on the ground directly under the disc
     bool aiming;
     Vector2 dragStart;
     float curveSpin;     // signed spin charged during the current aim
@@ -45,7 +47,13 @@ public class HumanController : MonoBehaviour
     void Update()
     {
         var mm = MatchManager.I;
-        Player me = mm != null ? mm.Controlled : null;
+        if (mm == null) return;
+
+        // Always show the disc's depth cue (it's hard to read height from the
+        // eagle-eye camera), independent of who's controlling.
+        UpdateDiscShadow(mm);
+
+        Player me = mm.Controlled;
         if (me == null) return;
 
         if (me.HasDisc) HandleThrowInput(mm, me);
@@ -130,13 +138,16 @@ public class HumanController : MonoBehaviour
         }
     }
 
+    /// <summary>Throw by PULLING BACK: drag the mouse opposite the way you want the
+    /// disc to go (like a slingshot / golf swing), then release. Drag distance = power.
+    /// This takes more touch than point-and-click — you judge the launch yourself.</summary>
     Vector3 ThrowVelocity(Vector2 drag)
     {
         Vector3 f = Flat(cam.transform.forward);
         Vector3 r = Flat(cam.transform.right);
 
-        // drag up the screen => throw away from camera (downfield)
-        Vector3 dir = (f * drag.y + r * drag.x);
+        // pull back to launch forward: the throw goes OPPOSITE the drag direction
+        Vector3 dir = -(f * drag.y + r * drag.x);
         if (dir.sqrMagnitude < 0.0001f) dir = f;
         dir.Normalize();
 
@@ -222,6 +233,56 @@ public class HumanController : MonoBehaviour
         landMarker.loop = true;            // closed ring
         landMarker.numCornerVertices = 4;
         landMarker.enabled = false;
+
+        var drop = new GameObject("DiscDropLine");
+        drop.transform.SetParent(transform, false);
+        dropLine = drop.AddComponent<LineRenderer>();
+        dropLine.widthMultiplier = 0.04f;
+        dropLine.material = new Material(Shader.Find("Sprites/Default"));
+        dropLine.startColor = new Color(1f, 1f, 1f, 0.7f);   // bright at the disc
+        dropLine.endColor   = new Color(1f, 1f, 1f, 0.25f);  // faint at the ground
+        dropLine.positionCount = 2;
+        dropLine.enabled = false;
+
+        var shadow = new GameObject("DiscShadowRing");
+        shadow.transform.SetParent(transform, false);
+        shadowRing = shadow.AddComponent<LineRenderer>();
+        shadowRing.widthMultiplier = 0.05f;
+        shadowRing.material = new Material(Shader.Find("Sprites/Default"));
+        shadowRing.startColor = shadowRing.endColor = new Color(0f, 0f, 0f, 0.55f);
+        shadowRing.loop = true;
+        shadowRing.numCornerVertices = 4;
+        shadowRing.enabled = false;
+    }
+
+    /// <summary>Depth cue for the top-down view: a thin vertical line from the disc
+    /// straight down to the ground, with a shadow ring where it meets the ground —
+    /// so you can read how high and how far the disc actually is while it flies.</summary>
+    void UpdateDiscShadow(MatchManager mm)
+    {
+        bool aloft = mm.disc != null && mm.disc.state == Disc.State.Flying;
+        dropLine.enabled = aloft;
+        shadowRing.enabled = aloft;
+        if (!aloft) return;
+
+        float ground = mm.disc.restHeight;
+        Vector3 p = mm.disc.transform.position;
+        Vector3 g = new Vector3(p.x, ground + 0.02f, p.z);
+
+        dropLine.SetPosition(0, p);    // perpendicular to the ground: same x/z, top at the disc
+        dropLine.SetPosition(1, g);
+
+        const int seg = 20;
+        const float radius = 0.5f;
+        shadowRing.positionCount = seg;
+        for (int i = 0; i < seg; i++)
+        {
+            float a = (i / (float)seg) * Mathf.PI * 2f;
+            shadowRing.SetPosition(i, new Vector3(
+                p.x + Mathf.Cos(a) * radius,
+                ground + 0.02f,
+                p.z + Mathf.Sin(a) * radius));
+        }
     }
 
     static Vector3 Flat(Vector3 v) { v.y = 0f; return v.sqrMagnitude > 1e-4f ? v.normalized : v; }
