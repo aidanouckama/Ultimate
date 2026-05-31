@@ -18,8 +18,12 @@ public class Disc : MonoBehaviour
     public float drag = 0.012f;
     [Tooltip("Glide lift from forward speed. Tune so a fast disc sails, then sinks.")]
     public float lift = 0.030f;
-    [Tooltip("Sideways curve from spin (flick disc). 0 = straight.")]
-    public float curl = 0.6f;
+    [Tooltip("Curve strength. The disc carves perpendicular to its travel, so this " +
+             "bends the whole flight path (a banana), not just the launch direction.")]
+    public float curl = 1.0f;
+    [Tooltip("How fast spin bleeds off in flight. Low = the curve sustains and breaks " +
+             "late (inside-out / outside-in); high = a quick early bend then straight.")]
+    public float spinDecay = 0.06f;
 
     [Header("Geometry")]
     public float restHeight = 0.06f;   // disc thickness / 2
@@ -118,7 +122,7 @@ public class Disc : MonoBehaviour
         if (state != State.Flying) return;
 
         if (graceTimer > 0f) graceTimer -= Time.fixedDeltaTime;
-        spin = Mathf.MoveTowards(spin, 0f, Time.fixedDeltaTime * 0.4f);
+        spin = Mathf.MoveTowards(spin, 0f, Time.fixedDeltaTime * spinDecay);
 
         rb.AddForce(Aero(rb.linearVelocity, spin), ForceMode.Acceleration);
 

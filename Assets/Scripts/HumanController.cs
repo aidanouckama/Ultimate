@@ -26,9 +26,9 @@ public class HumanController : MonoBehaviour
 
     [Header("Curve")]
     [Tooltip("Hold A / D (or ← / →) while aiming to bend the throw. Max signed spin.")]
-    public float maxCurveSpin = 1.6f;
+    public float maxCurveSpin = 1.4f;
     [Tooltip("How fast the curve winds up to full while the curve key is held.")]
-    public float curveChargeRate = 2.6f;
+    public float curveChargeRate = 2.2f;
 
     LineRenderer aim;
     bool aiming;
@@ -161,7 +161,7 @@ public class HumanController : MonoBehaviour
             aim.SetPosition(i, p);
             v += mm.disc.Aero(v, spin) * dt;   // same spin as the throw, so the line curls to match
             p += v * dt;
-            spin = Mathf.MoveTowards(spin, 0f, dt * 0.4f);   // mirror the in-flight spin decay
+            spin = Mathf.MoveTowards(spin, 0f, dt * mm.disc.spinDecay);   // mirror the in-flight spin decay
             if (p.y < mm.disc.restHeight) { p.y = mm.disc.restHeight; }
         }
     }

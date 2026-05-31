@@ -10,6 +10,12 @@ using UnityEngine;
 [RequireComponent(typeof(Player))]
 public class AIController : MonoBehaviour
 {
+    [Header("Throwing judgment")]
+    [Tooltip("Don't throw if a defender is within this distance of the passing lane.")]
+    public float laneBlockRadius = 2.8f;
+    [Tooltip("The receiver must have at least this much separation from defenders.")]
+    public float minReceiverOpenness = 2.6f;
+
     Player me;
     float decisionTimer;
     float holdThinkTimer;
@@ -52,26 +58,47 @@ public class AIController : MonoBehaviour
         float loft = Mathf.Clamp(dist * 0.18f, 2.5f, 6.5f);
         Vector3 vel = dir * speed + Vector3.up * loft;
 
-        float spin = Random.Range(-0.4f, 0.4f);
-        mm.disc.Throw(vel, me.team, spin);
+        // throw straight — the AI aims for a clear lane, so a random curve would
+        // only bend the disc off its intended (lane-checked) target.
+        mm.disc.Throw(vel, me.team, 0f);
     }
 
-    /// <summary>Pick the most open teammate, returning a lead point.</summary>
+    /// <summary>Pick the best teammate to throw to: open at the catch point AND
+    /// reachable through a clear lane. Returns null if nothing is safe (hold the
+    /// disc rather than turf it into a defender).</summary>
     Player BestReceiver(MatchManager mm, out Vector3 lead)
     {
         lead = Vector3.zero;
         Player best = null;
-        float bestScore = 0.2f;   // minimum openness to bother throwing
+        float bestScore = 0f;
         float dir = mm.field.AttackDir(me.team);
+        Vector3 from = mm.disc.transform.position;
 
         foreach (var mate in mm.TeamList(me.team))
         {
             if (mate == me) continue;
-            Vector3 predicted = mate.transform.position +
-                                new Vector3(0f, 0f, dir) * 4f;     // lead downfield
+
+            // lead the pass to where the receiver is cutting (their aiTarget),
+            // capped a few metres ahead; fall back to a step downfield if idle
+            Vector3 toCut = mate.aiTarget - mate.transform.position;
+            Vector3 predicted = toCut.sqrMagnitude > 1f
+                ? mate.transform.position + Vector3.ClampMagnitude(toCut, 6f)
+                : mate.transform.position + new Vector3(0f, 0f, dir) * 4f;
+            predicted = mm.field.ClampInBounds(predicted);
+
+            // GATE 1: a defender sitting in the passing lane would pick it off
+            float laneClear = LaneClearance(mm, from, predicted, me.team);
+            if (laneClear < laneBlockRadius) continue;
+
+            // GATE 2: the receiver has to actually be open where they'll catch it
             float openness = Openness(mm, predicted, me.team);
-            float progress = (predicted.z - me.transform.position.z) * dir; // reward forward
-            float score = openness + Mathf.Clamp(progress, -8f, 14f) * 0.05f;
+            if (openness < minReceiverOpenness) continue;
+
+            // among safe options, prefer open + downfield + a wide-open lane
+            float progress = (predicted.z - me.transform.position.z) * dir;
+            float score = openness
+                        + Mathf.Clamp(progress, -8f, 18f) * 0.08f
+                        + laneClear * 0.3f;
 
             if (score > bestScore)
             {
@@ -81,6 +108,32 @@ public class AIController : MonoBehaviour
             }
         }
         return best;
+    }
+
+    /// <summary>How close the nearest defender gets to the straight passing lane
+    /// from `from` to `to` (measured on the ground plane, since a flat-ish disc
+    /// can be picked off from below). Small = the lane is contested.</summary>
+    static float LaneClearance(MatchManager mm, Vector3 from, Vector3 to, Team team)
+    {
+        Vector3 a = from; a.y = 0f;
+        Vector3 b = to;   b.y = 0f;
+        float nearest = float.MaxValue;
+        foreach (var d in mm.TeamList(mm.Other(team)))
+        {
+            Vector3 p = d.transform.position; p.y = 0f;
+            float dist = DistPointToSegment(p, a, b);
+            if (dist < nearest) nearest = dist;
+        }
+        return nearest;
+    }
+
+    static float DistPointToSegment(Vector3 p, Vector3 a, Vector3 b)
+    {
+        Vector3 ab = b - a;
+        float len2 = ab.sqrMagnitude;
+        if (len2 < 1e-4f) return (p - a).magnitude;
+        float t = Mathf.Clamp01(Vector3.Dot(p - a, ab) / len2);
+        return (p - (a + ab * t)).magnitude;
     }
 
     // --- offense without the disc ----------------------------------------
