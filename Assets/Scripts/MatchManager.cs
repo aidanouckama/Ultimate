@@ -25,6 +25,11 @@ public class MatchManager : MonoBehaviour
     /// <summary>The player the human is steering right now.</summary>
     public Player Controlled { get; private set; }
 
+    [Tooltip("The single player the human always controls (the one with the white " +
+             "ring). Auto-picked from the human team if left unset. Control never " +
+             "switches — no more flicker when two players tie for nearest.")]
+    public Player humanPlayer;
+
     public float stallSeconds = 8f;   // how long a holder may keep the disc
     float stallTimer;
     bool pointLive = true;
@@ -48,6 +53,13 @@ public class MatchManager : MonoBehaviour
         if (players.Count == 0)
             foreach (var p in FindObjectsByType<Player>(FindObjectsSortMode.None))
                 Register(p);
+
+        // pick the one player the human will always control (a central handler)
+        if (humanPlayer == null)
+        {
+            var mine = TeamList(humanTeam);
+            if (mine.Count > 0) humanPlayer = mine[mine.Count / 2];
+        }
 
         // kick off the first point (unless a bootstrap already did)
         if (!started && field != null && disc != null && players.Count > 0)
@@ -104,25 +116,15 @@ public class MatchManager : MonoBehaviour
 
     void UpdateControlledPlayer()
     {
-        var mine = TeamList(humanTeam);
-        Player pick;
-
-        if (disc.Holder != null && disc.Holder.team == humanTeam)
+        // The human always steers one fixed player (the white-ringed one). Control
+        // never switches to "nearest the disc" — that flickered when two players
+        // tied. You run your own player to cut, catch, and throw.
+        if (humanPlayer == null)
         {
-            pick = disc.Holder;                       // you have it: you throw
+            var mine = TeamList(humanTeam);
+            if (mine.Count > 0) humanPlayer = mine[mine.Count / 2];
         }
-        else
-        {
-            // otherwise control whoever on your team is nearest the disc
-            Vector3 dp = disc.transform.position;
-            pick = null; float best = float.MaxValue;
-            foreach (var p in mine)
-            {
-                float d = (p.transform.position - dp).sqrMagnitude;
-                if (d < best) { best = d; pick = p; }
-            }
-        }
-        Controlled = pick;
+        Controlled = humanPlayer;
     }
 
     void UpdateHighlight()
@@ -201,9 +203,12 @@ public class MatchManager : MonoBehaviour
         LineUp(offense, isOffense: true);
         LineUp(defense, isOffense: false);
 
-        // holder = the middle offensive player
+        // On offense the human starts with the disc (their fixed player handles);
+        // otherwise the middle offensive player (an AI) does.
         var off = TeamList(offense);
-        Player holder = off[off.Count / 2];
+        Player holder = (offense == humanTeam && humanPlayer != null && off.Contains(humanPlayer))
+            ? humanPlayer
+            : off[off.Count / 2];
         GiveDisc(holder);
 
         possession = offense;

@@ -19,6 +19,7 @@ public class Player : MonoBehaviour
 
     Renderer rend;
     Color baseColor;
+    LineRenderer controlRing;   // white ring on the ground marking the human's player
 
     void Awake()
     {
@@ -33,6 +34,34 @@ public class Player : MonoBehaviour
 
         rend = GetComponentInChildren<Renderer>();
         if (rend != null) baseColor = rend.material.color;
+
+        BuildControlRing();
+    }
+
+    /// <summary>A flat white ring at the player's feet, shown only on the player the
+    /// human controls. Local-space so it rides the body (players only yaw, so it
+    /// stays flat on the ground).</summary>
+    void BuildControlRing()
+    {
+        var go = new GameObject("ControlRing");
+        go.transform.SetParent(transform, false);
+        controlRing = go.AddComponent<LineRenderer>();
+        controlRing.useWorldSpace = false;
+        controlRing.loop = true;
+        controlRing.widthMultiplier = 0.1f;
+        controlRing.material = new Material(Shader.Find("Sprites/Default"));
+        controlRing.startColor = controlRing.endColor = Color.white;
+
+        const int seg = 32;
+        const float radius = 1.1f;
+        float y = -StandHeight + 0.05f;   // pivot sits at StandHeight, so this is ~ground
+        controlRing.positionCount = seg;
+        for (int i = 0; i < seg; i++)
+        {
+            float a = (i / (float)seg) * Mathf.PI * 2f;
+            controlRing.SetPosition(i, new Vector3(Mathf.Cos(a) * radius, y, Mathf.Sin(a) * radius));
+        }
+        controlRing.enabled = false;
     }
 
     /// <summary>Move toward a world point this frame, staying upright.</summary>
@@ -80,11 +109,13 @@ public class Player : MonoBehaviour
         transform.position = new Vector3(spot.x, StandHeight, spot.z);
     }
 
-    /// <summary>Brighten the player the human is currently controlling.</summary>
+    /// <summary>Mark the player the human controls: a white ground ring, plus a
+    /// subtle brighten so they read clearly.</summary>
     public void SetHighlighted(bool on)
     {
-        if (rend == null) return;
-        rend.material.color = on ? Color.Lerp(baseColor, Color.white, 0.55f) : baseColor;
+        if (controlRing != null) controlRing.enabled = on;
+        if (rend != null)
+            rend.material.color = on ? Color.Lerp(baseColor, Color.white, 0.35f) : baseColor;
     }
 
     public bool HasDisc => MatchManager.I.disc.Holder == this;
