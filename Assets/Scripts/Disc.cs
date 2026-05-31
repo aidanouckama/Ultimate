@@ -31,6 +31,13 @@ public class Disc : MonoBehaviour
     public State state = State.Loose;
     public Player Holder { get; private set; }
 
+    /// <summary>The teammate a throw is aimed at (set by the AI). They run to
+    /// <see cref="LandingSpot"/> to catch it; null for a human throw.</summary>
+    public Player Receiver { get; private set; }
+    /// <summary>Where the current throw is predicted to touch down — receivers and
+    /// defenders home on this to make the catch / contest the pass.</summary>
+    public Vector3 LandingSpot { get; private set; }
+
     Rigidbody rb;
     Team throwerTeam;
     Player thrower;         // who released this throw — can't catch their own disc
@@ -72,6 +79,7 @@ public class Disc : MonoBehaviour
     public void AttachTo(Player p)
     {
         Holder = p;
+        Receiver = null;
         state = State.Held;
         rb.isKinematic = true;
         // Deliberately NOT parented. The disc follows the hand point in
@@ -93,22 +101,42 @@ public class Disc : MonoBehaviour
         if (state == State.Held) SnapToHand();
     }
 
-    public void Throw(Vector3 velocity, Team team, float spinAmount)
+    public void Throw(Vector3 velocity, Team team, float spinAmount, Player receiver = null)
     {
         thrower = Holder;           // remember who let it go, before clearing
         Holder = null;
+        Receiver = receiver;
         throwerTeam = team;
         spin = spinAmount;
         state = State.Flying;
         graceTimer = 0.18f;
         rb.isKinematic = false;
         rb.linearVelocity = velocity;
+        LandingSpot = PredictLanding(transform.position, velocity, spinAmount);
+    }
+
+    /// <summary>Simulate the flight with the disc's own model to find where it lands.
+    /// Receivers/defenders home on this so throws connect (or get contested).</summary>
+    public Vector3 PredictLanding(Vector3 from, Vector3 v, float spin0)
+    {
+        Vector3 p = from; Vector3 vel = v; float s = spin0;
+        const float dt = 0.04f;
+        for (int i = 0; i < 250; i++)       // up to 10s of flight
+        {
+            vel += Aero(vel, s) * dt;
+            p += vel * dt;
+            s = Mathf.MoveTowards(s, 0f, dt * spinDecay);
+            if (p.y <= restHeight) break;
+        }
+        p.y = restHeight;
+        return p;
     }
 
     /// <summary>Place the disc on the ground, free for anyone to pick up.</summary>
     public void Drop(Vector3 pos)
     {
         Holder = null;
+        Receiver = null;
         state = State.Loose;
         spin = 0f;
         rb.isKinematic = true;

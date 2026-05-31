@@ -31,6 +31,7 @@ public class AIController : MonoBehaviour
         bool myTeamHasIt = mm.disc.Holder != null && mm.disc.Holder.team == me.team;
 
         if (me.HasDisc)                              HandleHolder(mm);
+        else if (mm.disc.state == Disc.State.Flying) HandleFlight(mm);
         else if (mm.disc.state == Disc.State.Loose)  HandleLooseDisc(mm);
         else if (myTeamHasIt)                        HandleCutter(mm);
         else                                         HandleDefense(mm);
@@ -58,9 +59,10 @@ public class AIController : MonoBehaviour
         // a naive "speed proportional to distance" throw.
         Vector3 vel = SolveThrow(mm.disc, from, lead);
 
-        // throw straight — the AI aims for a clear lane, so a random curve would
-        // only bend the disc off its intended (lane-checked) target.
-        mm.disc.Throw(vel, me.team, 0f);
+        // throw straight to the chosen receiver — they'll run onto the landing spot
+        // and catch it (unless a defender gets there first). No random curve, which
+        // would only bend the disc off its lane-checked target.
+        mm.disc.Throw(vel, me.team, 0f, target);
     }
 
     [Header("Throw solver")]
@@ -209,6 +211,42 @@ public class AIController : MonoBehaviour
             cand = mm.field.ClampInBounds(cand);
             float open = Openness(mm, cand, me.team);
             if (open > bestOpen) { bestOpen = open; best = cand; }
+        }
+        return best;
+    }
+
+    // --- disc in flight ---------------------------------------------------
+
+    /// <summary>While a throw is in the air: the intended receiver runs onto the
+    /// landing spot and catches it, so throws connect by default. The defense just
+    /// marks up — it's up to the human (driving the nearest defender) to step into
+    /// the spot for a D. That's the only thing that breaks up an AI pass.</summary>
+    void HandleFlight(MatchManager mm)
+    {
+        if (mm.possession != me.team)
+        {
+            HandleDefense(mm);
+            return;
+        }
+        Vector3 spot = mm.disc.LandingSpot;
+        if (!mm.field.InBounds(spot))            // errant throw — don't chase it out
+        {
+            HandleCutter(mm);
+            return;
+        }
+        Player goTo = mm.disc.Receiver != null ? mm.disc.Receiver
+                                               : NearestToSpot(mm, me.team, spot);
+        if (goTo == me) me.MoveToward(spot, 1.2f);
+        else            HandleCutter(mm);
+    }
+
+    Player NearestToSpot(MatchManager mm, Team team, Vector3 spot)
+    {
+        Player best = null; float bd = float.MaxValue;
+        foreach (var p in mm.TeamList(team))
+        {
+            float d = (p.transform.position - spot).sqrMagnitude;
+            if (d < bd) { bd = d; best = p; }
         }
         return best;
     }
