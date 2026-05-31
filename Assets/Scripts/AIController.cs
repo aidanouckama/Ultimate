@@ -26,6 +26,7 @@ public class AIController : MonoBehaviour
     {
         var mm = MatchManager.I;
         if (mm == null) return;
+        if (!mm.InPlay) return;            // frozen during the turnover countdown
         if (mm.Controlled == me) return;   // human is driving this one
 
         bool myTeamHasIt = mm.disc.Holder != null && mm.disc.Holder.team == me.team;

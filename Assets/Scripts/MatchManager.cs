@@ -29,6 +29,13 @@ public class MatchManager : MonoBehaviour
     float stallTimer;
     bool pointLive = true;
 
+    [Tooltip("Frozen 3-2-1 countdown after every turnover, so you can see where the disc was put into play.")]
+    public float restartCountdown = 3f;
+    /// <summary>False during the post-turnover countdown — players & input are frozen.</summary>
+    public bool InPlay { get; private set; } = true;
+    float restartTimer;
+    string restartReason = "";
+
     public string statusLine = "";
 
     bool started;
@@ -65,6 +72,21 @@ public class MatchManager : MonoBehaviour
     {
         UpdateControlledPlayer();
         UpdateHighlight();
+
+        // After a turnover, freeze everyone and count "DISC IN… 3 / 2 / 1".
+        if (!InPlay)
+        {
+            restartTimer -= Time.deltaTime;
+            if (restartTimer > 0f)
+            {
+                statusLine = $"{restartReason}   ·   DISC IN… {Mathf.CeilToInt(restartTimer)}";
+                return;                       // play is frozen during the countdown
+            }
+            InPlay = true;
+            stallTimer = stallSeconds;        // fresh stall count once it's live
+            statusLine = "DISC IN!";
+            // fall through into live play this frame
+        }
 
         if (pointLive && disc.state == Disc.State.Held && disc.Holder != null)
         {
@@ -171,6 +193,11 @@ public class MatchManager : MonoBehaviour
             if (d < best) { best = d; nearest = p; }
         }
         if (nearest != null) GiveDisc(nearest);
+
+        // freeze play for the 3-2-1 "DISC IN!" countdown
+        restartReason = statusLine;           // why the turnover happened
+        restartTimer = restartCountdown;
+        InPlay = false;
     }
 
     void Score(Team t)

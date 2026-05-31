@@ -47,6 +47,13 @@ public class HumanController : MonoBehaviour
         Player me = mm != null ? mm.Controlled : null;
         if (me == null) return;
 
+        if (!mm.InPlay)                    // frozen during the turnover countdown
+        {
+            aim.enabled = false;
+            aiming = false;
+            return;
+        }
+
         if (me.HasDisc) HandleThrowInput(mm, me);
         else            HandleMovement(me);
     }
