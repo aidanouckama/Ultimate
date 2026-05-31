@@ -32,8 +32,8 @@ public class HumanController : MonoBehaviour
 
     LineRenderer aim;
     LineRenderer landMarker;
-    LineRenderer dropLine;     // thin vertical line from the disc down to the ground
-    LineRenderer shadowRing;   // ring on the ground directly under the disc
+    Transform shadowBlob;      // soft dark shadow under the disc; grows with height
+    Material shadowMat;
     bool aiming;
     Vector2 dragStart;
     float curveSpin;     // signed spin charged during the current aim
@@ -42,6 +42,7 @@ public class HumanController : MonoBehaviour
     {
         if (cam == null) cam = Camera.main;
         BuildAimLine();
+        BuildShadowBlob();
     }
 
     void Update()
@@ -233,56 +234,73 @@ public class HumanController : MonoBehaviour
         landMarker.loop = true;            // closed ring
         landMarker.numCornerVertices = 4;
         landMarker.enabled = false;
-
-        var drop = new GameObject("DiscDropLine");
-        drop.transform.SetParent(transform, false);
-        dropLine = drop.AddComponent<LineRenderer>();
-        dropLine.widthMultiplier = 0.04f;
-        dropLine.material = new Material(Shader.Find("Sprites/Default"));
-        dropLine.startColor = new Color(1f, 1f, 1f, 0.7f);   // bright at the disc
-        dropLine.endColor   = new Color(1f, 1f, 1f, 0.25f);  // faint at the ground
-        dropLine.positionCount = 2;
-        dropLine.enabled = false;
-
-        var shadow = new GameObject("DiscShadowRing");
-        shadow.transform.SetParent(transform, false);
-        shadowRing = shadow.AddComponent<LineRenderer>();
-        shadowRing.widthMultiplier = 0.05f;
-        shadowRing.material = new Material(Shader.Find("Sprites/Default"));
-        shadowRing.startColor = shadowRing.endColor = new Color(0f, 0f, 0f, 0.55f);
-        shadowRing.loop = true;
-        shadowRing.numCornerVertices = 4;
-        shadowRing.enabled = false;
     }
 
-    /// <summary>Depth cue for the top-down view: a thin vertical line from the disc
-    /// straight down to the ground, with a shadow ring where it meets the ground —
-    /// so you can read how high and how far the disc actually is while it flies.</summary>
+    /// <summary>Depth cue for the top-down view: a soft dark shadow on the ground
+    /// directly under the disc. It grows and fades as the disc climbs, shrinks and
+    /// darkens as it nears the ground — so you can read the disc's height at a glance
+    /// (and where it'll come down) while it flies.</summary>
     void UpdateDiscShadow(MatchManager mm)
     {
         bool aloft = mm.disc != null && mm.disc.state == Disc.State.Flying;
-        dropLine.enabled = aloft;
-        shadowRing.enabled = aloft;
+        if (shadowBlob.gameObject.activeSelf != aloft)
+            shadowBlob.gameObject.SetActive(aloft);
         if (!aloft) return;
 
         float ground = mm.disc.restHeight;
         Vector3 p = mm.disc.transform.position;
-        Vector3 g = new Vector3(p.x, ground + 0.02f, p.z);
+        float h = Mathf.Max(0f, p.y - ground);
 
-        dropLine.SetPosition(0, p);    // perpendicular to the ground: same x/z, top at the disc
-        dropLine.SetPosition(1, g);
+        float size  = Mathf.Clamp(0.9f + h * 0.18f, 0.9f, 3.5f);          // diameter (m)
+        float alpha = Mathf.Lerp(0.6f, 0.18f, Mathf.Clamp01(h / 12f));    // fade when high
 
-        const int seg = 20;
-        const float radius = 0.5f;
-        shadowRing.positionCount = seg;
-        for (int i = 0; i < seg; i++)
+        shadowBlob.SetPositionAndRotation(
+            new Vector3(p.x, ground + 0.02f, p.z),
+            Quaternion.Euler(90f, 0f, 0f));      // lie flat on the ground
+        shadowBlob.localScale = new Vector3(size, size, 1f);
+
+        Color c = shadowMat.color; c.a = alpha; shadowMat.color = c;
+    }
+
+    /// <summary>A flat quad on the ground textured with a soft radial blob — the disc's
+    /// shadow. No collider (players/disc are collider-free by design).</summary>
+    void BuildShadowBlob()
+    {
+        shadowBlob = GameObject.CreatePrimitive(PrimitiveType.Quad).transform;
+        shadowBlob.name = "DiscShadow";
+        shadowBlob.SetParent(transform, false);
+
+        var col = shadowBlob.GetComponent<Collider>();
+        if (col != null) Destroy(col);
+
+        shadowMat = new Material(Shader.Find("Sprites/Default"));
+        shadowMat.mainTexture = BuildSoftCircleTex(64);
+        shadowMat.color = new Color(0f, 0f, 0f, 0.6f);   // dark, semi-transparent
+        shadowBlob.GetComponent<MeshRenderer>().material = shadowMat;
+
+        shadowBlob.rotation = Quaternion.Euler(90f, 0f, 0f);
+        shadowBlob.gameObject.SetActive(false);
+    }
+
+    /// <summary>Generate a soft-edged white circle (alpha falls off to the rim) for the
+    /// shadow texture, so the blob has feathered edges instead of a hard disc.</summary>
+    static Texture2D BuildSoftCircleTex(int size)
+    {
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
         {
-            float a = (i / (float)seg) * Mathf.PI * 2f;
-            shadowRing.SetPosition(i, new Vector3(
-                p.x + Mathf.Cos(a) * radius,
-                ground + 0.02f,
-                p.z + Mathf.Sin(a) * radius));
-        }
+            wrapMode = TextureWrapMode.Clamp
+        };
+        float c = (size - 1) * 0.5f;
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) / c; // 0→1
+                float a = Mathf.Clamp01(1f - d);
+                a *= a;                                  // feather toward the edge
+                tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+            }
+        tex.Apply();
+        return tex;
     }
 
     static Vector3 Flat(Vector3 v) { v.y = 0f; return v.sqrMagnitude > 1e-4f ? v.normalized : v; }
