@@ -26,7 +26,8 @@ public class AIController : MonoBehaviour
     {
         var mm = MatchManager.I;
         if (mm == null) return;
-        if (mm.Controlled == me) return;   // human is driving this one
+        if (!mm.PointLive) return;          // play stopped (goal/reset) — everyone freezes
+        if (mm.Controlled == me) return;    // human is driving this one
 
         bool myTeamHasIt = mm.disc.Holder != null && mm.disc.Holder.team == me.team;
 

@@ -54,6 +54,9 @@ public class HumanController : MonoBehaviour
         // eagle-eye camera), independent of who's controlling.
         UpdateDiscShadow(mm);
 
+        // Play stopped (goal celebration / reset): no moving or throwing.
+        if (!mm.PointLive) { aiming = false; HideAim(); return; }
+
         Player me = mm.Controlled;
         if (me == null) return;
 

@@ -134,6 +134,10 @@ public class MatchManager : MonoBehaviour
 
     // ---- Rules events ----------------------------------------------------
 
+    /// <summary>True while the point is being played. False during a goal celebration /
+    /// reset — controllers freeze (no movement, no throwing) until the next point.</summary>
+    public bool PointLive => pointLive;
+
     public void GiveDisc(Player p)
     {
         disc.AttachTo(p);
@@ -147,7 +151,16 @@ public class MatchManager : MonoBehaviour
 
         if (catcher.team != throwerTeam)
         {
-            // interception
+            // CALLAHAN: a defender catching the throw inside the end zone the offense
+            // was attacking scores for the defense — it's a goal, not just a D.
+            if (field.InAttackingEndZone(catcher.transform.position, throwerTeam))
+            {
+                disc.AttachTo(catcher);   // make the catch, freeze, then score
+                Score(catcher.team);
+                statusLine = $"CALLAHAN — {catcher.team}!  {scoreHome} : {scoreAway}";
+                return;
+            }
+            // ordinary interception
             statusLine = $"Intercepted by {catcher.team}!";
             GiveDisc(catcher);
             return;
@@ -156,6 +169,9 @@ public class MatchManager : MonoBehaviour
         // completion to a teammate
         if (field.InAttackingEndZone(catcher.transform.position, catcher.team))
         {
+            // they make the catch first — the disc freezes in their hand (Held,
+            // kinematic) instead of sailing through the ground — then play stops.
+            disc.AttachTo(catcher);
             Score(catcher.team);
             return;
         }
