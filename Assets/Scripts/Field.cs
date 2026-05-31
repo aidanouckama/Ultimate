@@ -43,18 +43,20 @@ public class Field : MonoBehaviour
         return p;
     }
 
-    /// <summary>The signed Z of an end zone's goal line (front edge).</summary>
-    public float GoalLineZ(float side) => Mathf.Sign(side) * (HalfLength - endZoneDepth);
+    /// <summary>Distance from center to a goal line (front edge of an end zone).</summary>
+    public float GoalLineDist => HalfLength - endZoneDepth;
 
-    /// <summary>Where a disc that landed out of bounds is brought into play.
-    ///  - Out the side  → onto the nearest sideline at the same depth (perpendicular).
-    ///  - Out the back (past an end-zone back line) → onto that end zone's goal line.
-    /// A point already in bounds is returned unchanged.</summary>
-    public Vector3 BringInBounds(Vector3 p)
+    /// <summary>Where a turnover is put into play after the disc lands at p.
+    ///  - Out the side          → nearest sideline at the same depth (perpendicular).
+    ///  - In OR past an end zone → that end zone's goal line (front edge).
+    ///  - Otherwise (in the field of play) → exactly where it lies.</summary>
+    public Vector3 TurnoverSpot(Vector3 p)
     {
         p.x = Mathf.Clamp(p.x, -HalfWidth, HalfWidth);
-        if (Mathf.Abs(p.z) > HalfLength)
-            p.z = GoalLineZ(p.z);          // sailed past an end zone → its goal line
+        // any landing beyond the goal line (in the end zone or out the back) comes
+        // up to the goal line — you never start a possession inside the end zone.
+        if (Mathf.Abs(p.z) > GoalLineDist)
+            p.z = Mathf.Sign(p.z) * GoalLineDist;
         return p;
     }
 }

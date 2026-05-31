@@ -26,14 +26,14 @@ public class AIController : MonoBehaviour
     {
         var mm = MatchManager.I;
         if (mm == null) return;
-        if (!mm.InPlay) return;            // frozen during the turnover countdown
         if (mm.Controlled == me) return;   // human is driving this one
 
         bool myTeamHasIt = mm.disc.Holder != null && mm.disc.Holder.team == me.team;
 
-        if (me.HasDisc)            HandleHolder(mm);
-        else if (myTeamHasIt)      HandleCutter(mm);
-        else                       HandleDefense(mm);
+        if (me.HasDisc)                              HandleHolder(mm);
+        else if (mm.disc.state == Disc.State.Loose)  HandleLooseDisc(mm);
+        else if (myTeamHasIt)                        HandleCutter(mm);
+        else                                         HandleDefense(mm);
     }
 
     // --- with the disc ----------------------------------------------------
@@ -51,17 +51,60 @@ public class AIController : MonoBehaviour
         // throw a lead pass to where the receiver is heading
         Vector3 from = mm.disc.transform.position;
         Vector3 flat = lead - from; flat.y = 0f;
-        float dist = flat.magnitude;
-        if (dist < 1f) return;
+        if (flat.magnitude < 1f) return;
 
-        Vector3 dir = flat.normalized;
-        float speed = Mathf.Clamp(dist * 1.15f, 12f, 26f);
-        float loft = Mathf.Clamp(dist * 0.18f, 2.5f, 6.5f);
-        Vector3 vel = dir * speed + Vector3.up * loft;
+        // Solve the launch speed against the real flight model so the disc lands on
+        // the target instead of being heaved — the disc's glide carries it far past
+        // a naive "speed proportional to distance" throw.
+        Vector3 vel = SolveThrow(mm.disc, from, lead);
 
         // throw straight — the AI aims for a clear lane, so a random curve would
         // only bend the disc off its intended (lane-checked) target.
         mm.disc.Throw(vel, me.team, 0f);
+    }
+
+    [Header("Throw solver")]
+    [Tooltip("Launch loft as a fraction of horizontal speed (the arc height).")]
+    public float throwLoft = 0.28f;
+    [Tooltip("Search bounds for launch speed (m/s). Stay below the lift/gravity " +
+             "balance (~19) so range grows with speed and the disc doesn't float away.")]
+    public float minThrowSpeed = 5f;
+    public float maxThrowSpeed = 18f;
+
+    /// <summary>Binary-search a launch velocity (toward `to`, with a fixed loft) whose
+    /// simulated landing distance matches the target distance. Falls short rather than
+    /// long when the target is out of range — a safe miss, never an OOB heave.</summary>
+    Vector3 SolveThrow(Disc disc, Vector3 from, Vector3 to)
+    {
+        Vector3 flat = to - from; flat.y = 0f;
+        float want = flat.magnitude;
+        Vector3 dir = flat.normalized;
+
+        float lo = minThrowSpeed, hi = maxThrowSpeed;
+        for (int i = 0; i < 12; i++)
+        {
+            float mid = (lo + hi) * 0.5f;
+            if (SimRange(disc, from, dir, mid, throwLoft) < want) lo = mid; else hi = mid;
+        }
+        float speed = (lo + hi) * 0.5f;
+        return dir * speed + Vector3.up * speed * throwLoft;
+    }
+
+    /// <summary>Horizontal ground distance the disc travels for a given launch speed,
+    /// integrated with the disc's own Aero model (no spin).</summary>
+    static float SimRange(Disc disc, Vector3 from, Vector3 dir, float speed, float loft)
+    {
+        Vector3 p = from;
+        Vector3 v = dir * speed + Vector3.up * speed * loft;
+        const float dt = 0.05f;
+        for (int i = 0; i < 200; i++)        // up to 10s of flight
+        {
+            v += disc.Aero(v, 0f) * dt;
+            p += v * dt;
+            if (p.y <= disc.restHeight) break;
+        }
+        Vector3 d = p - from; d.y = 0f;
+        return d.magnitude;
     }
 
     /// <summary>Pick the best teammate to throw to: open at the catch point AND
@@ -170,17 +213,38 @@ public class AIController : MonoBehaviour
         return best;
     }
 
+    // --- loose disc on the ground ----------------------------------------
+
+    void HandleLooseDisc(MatchManager mm)
+    {
+        if (mm.possession != me.team)
+        {
+            HandleDefense(mm);                 // not our disc — set up defense
+            return;
+        }
+        // our disc: the nearest teammate goes and gets it, the rest get open
+        if (NearestToDisc(mm) == me)
+            me.MoveToward(mm.disc.transform.position, 1.1f);
+        else
+            HandleCutter(mm);
+    }
+
+    Player NearestToDisc(MatchManager mm)
+    {
+        Vector3 dp = mm.disc.transform.position;
+        Player best = null; float bd = float.MaxValue;
+        foreach (var p in mm.TeamList(me.team))
+        {
+            float d = (p.transform.position - dp).sqrMagnitude;
+            if (d < bd) { bd = d; best = p; }
+        }
+        return best;
+    }
+
     // --- defense ----------------------------------------------------------
 
     void HandleDefense(MatchManager mm)
     {
-        // chase a loose disc directly
-        if (mm.disc.state == Disc.State.Loose)
-        {
-            me.MoveToward(mm.disc.transform.position, 1.05f);
-            return;
-        }
-
         Player mark = NearestOpponent(mm);
         if (mark == null) return;
 

@@ -29,12 +29,8 @@ public class MatchManager : MonoBehaviour
     float stallTimer;
     bool pointLive = true;
 
-    [Tooltip("Frozen 3-2-1 countdown after every turnover, so you can see where the disc was put into play.")]
-    public float restartCountdown = 3f;
-    /// <summary>False during the post-turnover countdown — players & input are frozen.</summary>
-    public bool InPlay { get; private set; } = true;
-    float restartTimer;
-    string restartReason = "";
+    [Tooltip("How close a player must get to a loose disc on the ground to pick it up.")]
+    public float pickupRadius = 1.6f;
 
     public string statusLine = "";
 
@@ -73,21 +69,6 @@ public class MatchManager : MonoBehaviour
         UpdateControlledPlayer();
         UpdateHighlight();
 
-        // After a turnover, freeze everyone and count "DISC IN… 3 / 2 / 1".
-        if (!InPlay)
-        {
-            restartTimer -= Time.deltaTime;
-            if (restartTimer > 0f)
-            {
-                statusLine = $"{restartReason}   ·   DISC IN… {Mathf.CeilToInt(restartTimer)}";
-                return;                       // play is frozen during the countdown
-            }
-            InPlay = true;
-            stallTimer = stallSeconds;        // fresh stall count once it's live
-            statusLine = "DISC IN!";
-            // fall through into live play this frame
-        }
-
         if (pointLive && disc.state == Disc.State.Held && disc.Holder != null)
         {
             stallTimer -= Time.deltaTime;
@@ -98,6 +79,25 @@ public class MatchManager : MonoBehaviour
                 Turnover(disc.Holder.transform.position);
             }
         }
+
+        // a loose disc on the ground gets picked up by the team in possession
+        if (pointLive && disc.state == Disc.State.Loose)
+            TryPickUpLoose();
+    }
+
+    /// <summary>If a player on the possessing team is standing over the loose disc,
+    /// they pick it up. Only the team that earned possession can claim it.</summary>
+    void TryPickUpLoose()
+    {
+        Vector3 dp = disc.transform.position; dp.y = 0f;
+        Player best = null; float bd = pickupRadius * pickupRadius;
+        foreach (var p in TeamList(possession))
+        {
+            Vector3 pp = p.transform.position; pp.y = 0f;
+            float d = (pp - dp).sqrMagnitude;
+            if (d <= bd) { bd = d; best = p; }
+        }
+        if (best != null) GiveDisc(best);
     }
 
     // ---- Who does the human control? -------------------------------------
@@ -161,43 +161,22 @@ public class MatchManager : MonoBehaviour
         GiveDisc(catcher);
     }
 
-    /// <summary>The disc hit the ground untouched — always a turnover. Where the
-    /// disc is brought up depends on whether it landed in or out of bounds.</summary>
+    /// <summary>The disc hit the ground untouched — always a turnover. TurnoverSpot
+    /// places it: where it lies in the field, on the sideline if out the side, or on
+    /// the goal line if it landed in / past an end zone.</summary>
     public void OnDiscLanded(Vector3 pos)
     {
         if (!pointLive) return;
-        if (field.InBounds(pos))
-        {
-            statusLine = "Disc down — turnover.";
-            Turnover(pos);                       // play it where it lies
-        }
-        else
-        {
-            statusLine = "Out of bounds — turnover.";
-            // Out the side → perpendicular to the sideline; out the back → the
-            // goal line of the end zone the disc sailed past.
-            Turnover(field.BringInBounds(pos));
-        }
+        statusLine = field.InBounds(pos) ? "Disc down — turnover." : "Out of bounds — turnover.";
+        Turnover(field.TurnoverSpot(pos));
     }
 
     void Turnover(Vector3 pos)
     {
-        Team next = Other(possession);
-        possession = next;
+        possession = Other(possession);
+        // The disc lies on the ground at the spot; the new offense has to run over
+        // and pick it up (see TryPickUpLoose). No teleport — possession just flips.
         disc.Drop(pos);
-        // nearest player of the new team picks it up
-        Player nearest = null; float best = float.MaxValue;
-        foreach (var p in TeamList(next))
-        {
-            float d = (p.transform.position - pos).sqrMagnitude;
-            if (d < best) { best = d; nearest = p; }
-        }
-        if (nearest != null) GiveDisc(nearest);
-
-        // freeze play for the 3-2-1 "DISC IN!" countdown
-        restartReason = statusLine;           // why the turnover happened
-        restartTimer = restartCountdown;
-        InPlay = false;
     }
 
     void Score(Team t)
@@ -243,7 +222,7 @@ public class MatchManager : MonoBehaviour
         {
             float t01 = n == 1 ? 0.5f : i / (float)(n - 1);
             float x = Mathf.Lerp(-field.HalfWidth * 0.7f, field.HalfWidth * 0.7f, t01);
-            list[i].transform.position = new Vector3(x, 1f, z);   // capsule half-height
+            list[i].PlaceAtGround(new Vector3(x, 0f, z));
             list[i].FaceDir(new Vector3(0f, 0f, dir));
         }
     }

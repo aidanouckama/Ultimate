@@ -69,6 +69,17 @@ public class Player : MonoBehaviour
                 12f * Time.deltaTime);
     }
 
+    /// <summary>Pivot height when standing (capsule half-height). The disc lands at
+    /// ground level, so use this to place a player without sinking them into it.</summary>
+    public const float StandHeight = 1f;
+
+    /// <summary>Drop the player onto a ground spot, keeping them on their feet —
+    /// the spot's Y is ignored in favor of <see cref="StandHeight"/>.</summary>
+    public void PlaceAtGround(Vector3 spot)
+    {
+        transform.position = new Vector3(spot.x, StandHeight, spot.z);
+    }
+
     /// <summary>Brighten the player the human is currently controlling.</summary>
     public void SetHighlighted(bool on)
     {

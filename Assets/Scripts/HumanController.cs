@@ -31,6 +31,7 @@ public class HumanController : MonoBehaviour
     public float curveChargeRate = 2.2f;
 
     LineRenderer aim;
+    LineRenderer landMarker;
     bool aiming;
     Vector2 dragStart;
     float curveSpin;     // signed spin charged during the current aim
@@ -46,13 +47,6 @@ public class HumanController : MonoBehaviour
         var mm = MatchManager.I;
         Player me = mm != null ? mm.Controlled : null;
         if (me == null) return;
-
-        if (!mm.InPlay)                    // frozen during the turnover countdown
-        {
-            aim.enabled = false;
-            aiming = false;
-            return;
-        }
 
         if (me.HasDisc) HandleThrowInput(mm, me);
         else            HandleMovement(me);
@@ -90,7 +84,7 @@ public class HumanController : MonoBehaviour
 
     void HandleMovement(Player me)
     {
-        aim.enabled = false;
+        HideAim();
         aiming = false;
 
         Vector2 mv = ReadMoveAxis();
@@ -129,7 +123,7 @@ public class HumanController : MonoBehaviour
         if (aiming && mouse.leftButton.wasReleasedThisFrame)
         {
             aiming = false;
-            aim.enabled = false;
+            HideAim();
             Vector2 drag = MousePos() - dragStart;
             if (drag.magnitude > 8f)   // ignore an accidental tap
                 mm.disc.Throw(ThrowVelocity(drag), me.team, curveSpin);
@@ -157,20 +151,54 @@ public class HumanController : MonoBehaviour
 
     void DrawPreview(MatchManager mm, Player me, Vector3 v0, float spin)
     {
-        const int steps = 45;
+        const int maxSteps = 80;
         const float dt = 0.045f;
+        float ground = mm.disc.restHeight;
         Vector3 p = mm.disc.transform.position;
         Vector3 v = v0;
+
         aim.enabled = true;
-        aim.positionCount = steps;
-        for (int i = 0; i < steps; i++)
+        aim.positionCount = maxSteps;     // temporary; trimmed to `count` below
+        int count = 0;
+        aim.SetPosition(count++, p);
+
+        for (int i = 1; i < maxSteps; i++)
         {
-            aim.SetPosition(i, p);
             v += mm.disc.Aero(v, spin) * dt;   // same spin as the throw, so the line curls to match
             p += v * dt;
             spin = Mathf.MoveTowards(spin, 0f, dt * mm.disc.spinDecay);   // mirror the in-flight spin decay
-            if (p.y < mm.disc.restHeight) { p.y = mm.disc.restHeight; }
+
+            bool landed = p.y <= ground;
+            if (landed) p.y = ground;
+            aim.SetPosition(count++, p);
+            if (landed) break;                 // stop the line at the point it hits the ground
         }
+        aim.positionCount = count;             // trim to the flight actually drawn
+
+        DrawLandMarker(p, ground);             // small circle where it will land
+    }
+
+    /// <summary>A small flat white ring on the ground marking the predicted landing spot.</summary>
+    void DrawLandMarker(Vector3 center, float ground)
+    {
+        const int seg = 24;
+        const float radius = 0.6f;
+        landMarker.enabled = true;
+        landMarker.positionCount = seg;
+        for (int i = 0; i < seg; i++)
+        {
+            float a = (i / (float)seg) * Mathf.PI * 2f;
+            landMarker.SetPosition(i, new Vector3(
+                center.x + Mathf.Cos(a) * radius,
+                ground + 0.02f,
+                center.z + Mathf.Sin(a) * radius));
+        }
+    }
+
+    void HideAim()
+    {
+        aim.enabled = false;
+        landMarker.enabled = false;
     }
 
     void BuildAimLine()
@@ -184,6 +212,16 @@ public class HumanController : MonoBehaviour
         aim.endColor   = new Color(1f, 1f, 1f, 0.1f);
         aim.numCapVertices = 2;
         aim.enabled = false;
+
+        var ring = new GameObject("LandMarker");
+        ring.transform.SetParent(transform, false);
+        landMarker = ring.AddComponent<LineRenderer>();
+        landMarker.widthMultiplier = 0.07f;
+        landMarker.material = new Material(Shader.Find("Sprites/Default"));
+        landMarker.startColor = landMarker.endColor = Color.white;
+        landMarker.loop = true;            // closed ring
+        landMarker.numCornerVertices = 4;
+        landMarker.enabled = false;
     }
 
     static Vector3 Flat(Vector3 v) { v.y = 0f; return v.sqrMagnitude > 1e-4f ? v.normalized : v; }
