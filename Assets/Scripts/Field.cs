@@ -42,4 +42,19 @@ public class Field : MonoBehaviour
         p.z = Mathf.Clamp(p.z, -HalfLength, HalfLength);
         return p;
     }
+
+    /// <summary>The signed Z of an end zone's goal line (front edge).</summary>
+    public float GoalLineZ(float side) => Mathf.Sign(side) * (HalfLength - endZoneDepth);
+
+    /// <summary>Where a disc that landed out of bounds is brought into play.
+    ///  - Out the side  → onto the nearest sideline at the same depth (perpendicular).
+    ///  - Out the back (past an end-zone back line) → onto that end zone's goal line.
+    /// A point already in bounds is returned unchanged.</summary>
+    public Vector3 BringInBounds(Vector3 p)
+    {
+        p.x = Mathf.Clamp(p.x, -HalfWidth, HalfWidth);
+        if (Mathf.Abs(p.z) > HalfLength)
+            p.z = GoalLineZ(p.z);          // sailed past an end zone → its goal line
+        return p;
+    }
 }

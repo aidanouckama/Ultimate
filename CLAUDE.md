@@ -80,7 +80,7 @@ All gameplay code and assets are under `Assets/`:
 
 ## Work tracker
 
-See **[`TODO.md`](TODO.md)** for the current bug list (disc shrinking on throw,
-out-of-bounds turnover + placement, no human disc curve) and the feature roadmap
-(throw types, smarter AI, character models/animation, game flow, multiplayer).
-Keep it updated as items are fixed or added.
+See **[`TODO.md`](TODO.md)** for status. The three launch bugs (disc shrinking on
+throw, out-of-bounds turnover + placement, no human disc curve) are now **fixed**;
+what remains is the feature roadmap (throw types, smarter AI, character
+models/animation, game flow, multiplayer). Keep it updated as items are fixed or added.

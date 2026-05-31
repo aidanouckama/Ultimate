@@ -24,9 +24,16 @@ public class HumanController : MonoBehaviour
     public float loftBase = 2.5f;
     public float loftScale = 4.0f;
 
+    [Header("Curve")]
+    [Tooltip("Hold A / D (or ← / →) while aiming to bend the throw. Max signed spin.")]
+    public float maxCurveSpin = 1.6f;
+    [Tooltip("How fast the curve winds up to full while the curve key is held.")]
+    public float curveChargeRate = 2.6f;
+
     LineRenderer aim;
     bool aiming;
     Vector2 dragStart;
+    float curveSpin;     // signed spin charged during the current aim
 
     void Awake()
     {
@@ -61,6 +68,17 @@ public class HumanController : MonoBehaviour
     static Vector2 MousePos() =>
         Mouse.current != null ? Mouse.current.position.ReadValue() : Vector2.zero;
 
+    // +1 curls right, -1 curls left (matches Disc.Aero's sign convention).
+    static float ReadCurveAxis()
+    {
+        var kb = Keyboard.current;
+        float c = 0f;
+        if (kb == null) return c;
+        if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) c += 1f;
+        if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)  c -= 1f;
+        return c;
+    }
+
     // --- running ----------------------------------------------------------
 
     void HandleMovement(Player me)
@@ -86,12 +104,18 @@ public class HumanController : MonoBehaviour
         {
             aiming = true;
             dragStart = MousePos();
+            curveSpin = 0f;
         }
 
         if (aiming && mouse.leftButton.isPressed)
         {
+            // wind the curve up/down while you hold A/D, clamped both ways
+            curveSpin = Mathf.Clamp(
+                curveSpin + ReadCurveAxis() * curveChargeRate * Time.deltaTime,
+                -maxCurveSpin, maxCurveSpin);
+
             Vector3 vel = ThrowVelocity(MousePos() - dragStart);
-            DrawPreview(mm, me, vel);
+            DrawPreview(mm, me, vel, curveSpin);
             me.FaceDir(Flat(vel));
         }
 
@@ -101,7 +125,7 @@ public class HumanController : MonoBehaviour
             aim.enabled = false;
             Vector2 drag = MousePos() - dragStart;
             if (drag.magnitude > 8f)   // ignore an accidental tap
-                mm.disc.Throw(ThrowVelocity(drag), me.team, 0f);
+                mm.disc.Throw(ThrowVelocity(drag), me.team, curveSpin);
         }
     }
 
@@ -124,7 +148,7 @@ public class HumanController : MonoBehaviour
 
     // --- aim preview ------------------------------------------------------
 
-    void DrawPreview(MatchManager mm, Player me, Vector3 v0)
+    void DrawPreview(MatchManager mm, Player me, Vector3 v0, float spin)
     {
         const int steps = 45;
         const float dt = 0.045f;
@@ -135,8 +159,9 @@ public class HumanController : MonoBehaviour
         for (int i = 0; i < steps; i++)
         {
             aim.SetPosition(i, p);
-            v += mm.disc.Aero(v, 0f) * dt;
+            v += mm.disc.Aero(v, spin) * dt;   // same spin as the throw, so the line curls to match
             p += v * dt;
+            spin = Mathf.MoveTowards(spin, 0f, dt * 0.4f);   // mirror the in-flight spin decay
             if (p.y < mm.disc.restHeight) { p.y = mm.disc.restHeight; }
         }
     }

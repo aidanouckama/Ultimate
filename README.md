@@ -31,6 +31,7 @@ https://github.com — public repo. Made with Claude Code.
 | Throw | **Hold left mouse**, **drag** toward your target, **release** |
 | Power | how **far** you drag (a dotted line previews the flight) |
 | Direction | the **direction** you drag (up = downfield) |
+| Curve | hold **A / D** while aiming to bend the throw left / right |
 
 You control the **highlighted** player — the disc-holder when your team has it
 (you're planted, like real ultimate: pass to advance), otherwise whoever's

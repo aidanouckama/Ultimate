@@ -2,51 +2,34 @@
 
 Working tracker for the frisbee game. Bugs to fix next, then the longer roadmap.
 
-## 🐞 Bugs / fixes (next session)
+## ✅ Fixed (2026-05-31)
 
-### 1. Disc shrinks every time it's thrown
-**Symptom:** the disc gets visibly smaller with each throw/catch cycle.
-**Likely cause:** `Disc.AttachTo` parents the disc to `Player.HandPoint`, a child of
-the player capsule scaled `(0.9, 1, 0.9)`. Parenting with `SetParent(parent, false)`
-keeps the disc's localScale but inherits the parent's scale, so world scale shrinks
-by 0.9 on each attach; `Throw`'s `SetParent(null, true)` then bakes that smaller world
-scale into localScale. Repeats every possession → compounding shrink.
-**Fix options (`Disc.cs`):**
-- Cache the disc's original `localScale` in `Awake` and reapply it after every reparent
-  (attach / throw / drop), **or**
-- Don't parent at all — when held, follow `holder.HandPoint.position` each frame
-  (no scale inheritance). Cleanest.
+### 1. Disc shrinks every time it's thrown — FIXED
+The disc is no longer parented to the hand. `Disc.AttachTo` just records the holder and
+`Disc.LateUpdate` snaps the disc onto `holder.HandPoint` each frame (`SnapToHand`). With
+no parenting there's no scale inheritance, so the disc keeps its prefab scale forever.
+`Throw` / `Drop` dropped their `SetParent(null, true)` calls.
 
-### 2. Out-of-bounds / ground turnover + placement
-**Desired:** when the disc lands (hits the ground) **or** goes out of bounds and is
-**not curving back in**, it's a turnover, and the disc is placed:
-- where it lies, if it landed in bounds, or
-- on the sideline at the point across from where it crossed out (sideline crossing point).
+### 2. Out-of-bounds / ground turnover + placement — FIXED
+The disc is now judged only when it **lands** (`Disc.FixedUpdate` → `OnDiscLanded`); the
+old mid-air OOB fault is gone, so a disc that curves out over the sideline and back in
+stays live. `MatchManager.OnDiscLanded` branches: landed in bounds → turnover where it
+lies; landed out → turnover at `Field.ClampInBounds(pos)` (the sideline point across from
+where it fell). Replaced the old `OnDiscGrounded` / `OnDiscOutOfBounds` pair.
 
-**Current state (`Disc.FixedUpdate` / `MatchManager`):**
-- Ground landing → `OnDiscGrounded` → turnover at the landing spot — even if that spot
-  is out of bounds (should instead bring it to the nearest sideline point).
-- Airborne out-of-bounds → `OnDiscOutOfBounds` → turnover, clamped via
-  `Field.ClampInBounds` (≈ nearest sideline point).
+### 3. Curve the disc (human throws) — FIXED
+`HumanController` now charges a signed `curveSpin` while you hold **A / D** (or ← / →)
+during the aim (clamped to `maxCurveSpin`, ramped at `curveChargeRate`), passes it into
+`Disc.Throw(vel, team, curveSpin)`, and feeds the same spin (with matching in-flight
+decay) into `DrawPreview`, so the dotted line curls exactly like the throw will.
 
-**To do:**
-- Make OOB reliably register as a turnover (a disc that *lands* out of bounds currently
-  goes through the ground path, not the OOB path — verify and unify).
-- Place the disc at the **sideline crossing point** (where it first crossed the line),
-  not just the raw landing/exit position.
-- Account for a **curving** disc that may re-enter — only call it out once it has landed
-  or is clearly leaving; don't fault a disc that curves back in-bounds. Depends on #3.
+**OOB placement rule** (`Field.BringInBounds`): out the **side** → nearest sideline at the
+same depth (perpendicular); out the **back**, past an end zone → that end zone's **goal
+line** (`GoalLineZ`); in bounds → where it lies. Also: the thrower can no longer catch
+their own throw (`Disc.thrower` is skipped in `TryCatch`).
 
-### 3. No way to curve the disc (human throws)
-**State:** the flight model already supports curve (`Disc.curl` + the `spin` arg to
-`Disc.Throw`), and the AI passes a random spin, but `HumanController` always throws with
-`spin = 0`.
-**To do (`HumanController.cs`):**
-- Add a curve control (e.g. A/D or Q/E held while aiming, or map horizontal mouse travel
-  during the drag to spin).
-- Pass that spin into `Disc.Throw(vel, team, spin)`.
-- Feed the same spin into the aim preview (`DrawPreview` currently calls `Aero(v, 0f)`)
-  so the predicted line curves to match the throw.
+> Follow-ups if you want them: tune `maxCurveSpin` / `curveChargeRate` for feel; add an
+> on-HUD curve indicator.
 
 ## 🗺️ Roadmap / feature ideas
 

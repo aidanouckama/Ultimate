@@ -27,7 +27,7 @@ public class Hud : MonoBehaviour
 
         GUI.Label(new Rect(20, Screen.height - 70, 700, 60),
             "Move: WASD / Arrows   •   Throw: hold LEFT-MOUSE, drag toward target, release\n" +
-            "You control the highlighted player. With the disc you're planted — pass to advance.",
+            "Curve: hold A / D while aiming   •   You control the highlighted player — pass to advance.",
             small);
     }
 }

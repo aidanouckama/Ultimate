@@ -139,18 +139,23 @@ public class MatchManager : MonoBehaviour
         GiveDisc(catcher);
     }
 
-    public void OnDiscGrounded(Vector3 pos)
+    /// <summary>The disc hit the ground untouched — always a turnover. Where the
+    /// disc is brought up depends on whether it landed in or out of bounds.</summary>
+    public void OnDiscLanded(Vector3 pos)
     {
         if (!pointLive) return;
-        statusLine = "Disc down — turnover.";
-        Turnover(pos);
-    }
-
-    public void OnDiscOutOfBounds(Vector3 pos)
-    {
-        if (!pointLive) return;
-        statusLine = "Out of bounds — turnover.";
-        Turnover(field.ClampInBounds(pos));
+        if (field.InBounds(pos))
+        {
+            statusLine = "Disc down — turnover.";
+            Turnover(pos);                       // play it where it lies
+        }
+        else
+        {
+            statusLine = "Out of bounds — turnover.";
+            // Out the side → perpendicular to the sideline; out the back → the
+            // goal line of the end zone the disc sailed past.
+            Turnover(field.BringInBounds(pos));
+        }
     }
 
     void Turnover(Vector3 pos)

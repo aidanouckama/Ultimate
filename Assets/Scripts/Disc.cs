@@ -29,6 +29,7 @@ public class Disc : MonoBehaviour
 
     Rigidbody rb;
     Team throwerTeam;
+    Player thrower;         // who released this throw — can't catch their own disc
     float graceTimer;       // brief window after release: nobody can catch
     float spin;             // signed spin imparted at throw, decays in flight
 
@@ -69,14 +70,28 @@ public class Disc : MonoBehaviour
         Holder = p;
         state = State.Held;
         rb.isKinematic = true;
-        transform.SetParent(p.HandPoint, false);
-        transform.localPosition = Vector3.zero;
-        transform.localRotation = Quaternion.identity;
+        // Deliberately NOT parented. The disc follows the hand point in
+        // LateUpdate instead, so it never inherits the player's (0.9) scale —
+        // parenting used to compound that shrink on every catch.
+        SnapToHand();
+    }
+
+    void SnapToHand()
+    {
+        if (Holder == null || Holder.HandPoint == null) return;
+        transform.position = Holder.HandPoint.position;
+        transform.rotation = Holder.HandPoint.rotation;
+    }
+
+    /// <summary>While held, ride the holder's hand (after they've moved).</summary>
+    void LateUpdate()
+    {
+        if (state == State.Held) SnapToHand();
     }
 
     public void Throw(Vector3 velocity, Team team, float spinAmount)
     {
-        transform.SetParent(null, true);
+        thrower = Holder;           // remember who let it go, before clearing
         Holder = null;
         throwerTeam = team;
         spin = spinAmount;
@@ -89,7 +104,6 @@ public class Disc : MonoBehaviour
     /// <summary>Place the disc on the ground, free for anyone to pick up.</summary>
     public void Drop(Vector3 pos)
     {
-        transform.SetParent(null, true);
         Holder = null;
         state = State.Loose;
         spin = 0f;
@@ -113,12 +127,12 @@ public class Disc : MonoBehaviour
 
         Vector3 p = rb.position;
 
-        // landed?
+        // The disc is only dead once it touches the ground. A disc sailing over
+        // out-of-bounds territory is still live — it may curl back in or be
+        // caught — so we don't fault it mid-air. MatchManager decides in-bounds
+        // (place where it lies) vs out (bring to the sideline) at landing.
         if (p.y <= restHeight)
-            MatchManager.I.OnDiscGrounded(p);
-        // left the field?
-        else if (!MatchManager.I.field.InBounds(p))
-            MatchManager.I.OnDiscOutOfBounds(p);
+            MatchManager.I.OnDiscLanded(p);
         // someone catches it?
         else if (graceTimer <= 0f)
             TryCatch();
@@ -132,6 +146,7 @@ public class Disc : MonoBehaviour
 
         foreach (var pl in MatchManager.I.players)
         {
+            if (pl == thrower) continue;         // you can't catch your own throw
             float reach = pl.catchRadius;
             Vector3 d = pl.transform.position - dp;
             d.y *= 0.5f;                         // jumping/extension is cheap vertically
