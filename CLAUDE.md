@@ -78,8 +78,9 @@ All gameplay code and assets are under `Assets/`:
 - Match the existing terse, commented style. New gameplay types generally take a
   `MatchManager.I` reference rather than singletons of their own.
 
-## Possible next steps (not yet built)
+## Work tracker
 
-Rigged character models + animation; distinct forehand/backhand/huck throws;
-smarter cutting patterns and defensive marking/force; game-to-15 flow, menu,
-sound; local or networked multiplayer.
+See **[`TODO.md`](TODO.md)** for the current bug list (disc shrinking on throw,
+out-of-bounds turnover + placement, no human disc curve) and the feature roadmap
+(throw types, smarter AI, character models/animation, game flow, multiplayer).
+Keep it updated as items are fixed or added.
