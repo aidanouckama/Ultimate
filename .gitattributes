@@ -1,0 +1,31 @@
+# Normalize line endings
+* text=auto
+
+# Source
+*.cs text diff=csharp
+
+# Unity YAML assets — use Unity's smart merge tool and keep LF
+*.unity      merge=unityyamlmerge eol=lf
+*.prefab     merge=unityyamlmerge eol=lf
+*.asset      merge=unityyamlmerge eol=lf
+*.meta       merge=unityyamlmerge eol=lf
+*.mat        merge=unityyamlmerge eol=lf
+*.controller merge=unityyamlmerge eol=lf
+*.anim       merge=unityyamlmerge eol=lf
+
+# Common binary asset types (marked binary so git won't munge them).
+# If you start committing lots of art/audio, consider Git LFS for these.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.psd  binary
+*.fbx  binary
+*.obj  binary
+*.wav  binary
+*.mp3  binary
+*.ogg  binary
+*.ttf  binary
+*.otf  binary
+*.dll  binary
+*.unitypackage binary
