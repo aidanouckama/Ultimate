@@ -17,9 +17,20 @@ public class Player : MonoBehaviour
 
     [HideInInspector] public Vector3 aiTarget;   // where the AI currently wants to go
 
+    [Tooltip("Animator on the character-model child. Drives idle / run / throw. " +
+             "Wired by the character setup; leave empty for the old capsule look.")]
+    public Animator animator;
+
+    [Tooltip("Run-cycle playback speed per unit of ground speed. Raise it if the feet " +
+             "skate (legs too slow for the movement); lower it if they churn too fast. " +
+             "Higher values also make a sped-up walk read as a run.")]
+    public float legCyclePerSpeed = 0.34f;
+
     Renderer rend;
     Color baseColor;
     LineRenderer controlRing;   // white ring on the ground marking the human's player
+    Vector3 lastAnimPos;        // previous position, to derive run speed for the animator
+    bool lastAnimPosInit;
 
     void Awake()
     {
@@ -96,6 +107,27 @@ public class Player : MonoBehaviour
                 transform.rotation,
                 Quaternion.LookRotation(dir),
                 12f * Time.deltaTime);
+    }
+
+    /// <summary>Feed the animator a run speed derived from how far the (script-driven)
+    /// transform actually moved this frame — works the same whether a human or the AI
+    /// is steering, since both just move the transform.</summary>
+    void LateUpdate()
+    {
+        if (animator == null) return;
+        if (!lastAnimPosInit) { lastAnimPos = transform.position; lastAnimPosInit = true; }
+        float dt = Mathf.Max(Time.deltaTime, 1e-4f);
+        float speed = (transform.position - lastAnimPos).magnitude / dt;
+        lastAnimPos = transform.position;
+        animator.SetFloat("Speed", speed, 0.1f, dt);   // damped so it eases in/out
+        // match the run cadence to the ground speed so the feet plant instead of slide
+        animator.SetFloat("LegSpeed", Mathf.Clamp(speed * legCyclePerSpeed, 0.5f, 3.5f));
+    }
+
+    /// <summary>Fire the throw animation. Called the instant a throw is released.</summary>
+    public void PlayThrow()
+    {
+        if (animator != null) animator.SetTrigger("Throw");
     }
 
     /// <summary>Pivot height when standing (capsule half-height). The disc lands at

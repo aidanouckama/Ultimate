@@ -64,6 +64,7 @@ public class AIController : MonoBehaviour
         // and catch it (unless a defender gets there first). No random curve, which
         // would only bend the disc off its lane-checked target.
         mm.disc.Throw(vel, me.team, 0f, target);
+        me.PlayThrow();
     }
 
     [Header("Throw solver")]

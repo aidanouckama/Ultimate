@@ -138,7 +138,10 @@ public class HumanController : MonoBehaviour
             HideAim();
             Vector2 drag = MousePos() - dragStart;
             if (drag.magnitude > 8f)   // ignore an accidental tap
+            {
                 mm.disc.Throw(ThrowVelocity(drag), me.team, curveSpin);
+                me.PlayThrow();
+            }
         }
     }
 
