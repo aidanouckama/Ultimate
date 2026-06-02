@@ -19,10 +19,12 @@ All gameplay code and assets are under `Assets/`:
 | Path | What |
 |------|------|
 | `Assets/Scripts/` | All runtime gameplay scripts (see table below) |
-| `Assets/Editor/FrisbeeBuilder.cs` | Editor tool: **Frisbee → Build Assets & Scene** |
-| `Assets/Frisbee/Materials/` | Generated material assets |
+| `Assets/Frisbee/Materials/` | Material assets |
 | `Assets/Frisbee/Prefabs/` | `Field`, `Disc`, `PlayerHome`, `PlayerAway` |
-| `Assets/Frisbee/Scenes/Frisbee.unity` | The playable scene |
+| `Assets/Frisbee/Scenes/Frisbee.unity` | **The playable scene** (authored, prefab instances) |
+
+> `Assets/Scenes/Frisbee.unity` is a stale leftover (only a broken `GameBootstrap`
+> reference) — ignore it; the real scene is under `Assets/Frisbee/Scenes/`.
 
 ### Runtime scripts
 | Script | Role |
@@ -51,10 +53,10 @@ All gameplay code and assets are under `Assets/`:
   reality. Ground/out-of-bounds are detected by position, not physics.
 - **Input System (new).** `HumanController` reads `Keyboard.current` /
   `Mouse.current`. Keep Active Input Handling on "Input System Package (New)".
-- **Regenerating assets.** Materials/prefabs/scene are produced by
-  `FrisbeeBuilder`. Re-running the menu command overwrites them, so prefer
-  editing the builder (or the assets directly) over hand-editing `.unity`/
-  `.prefab`/`.mat` YAML.
+- **Assets are authored, not generated.** Materials/prefabs/scene were originally
+  produced by an editor tool (`FrisbeeBuilder`, now deleted) but are now edited
+  directly — in the Unity Inspector, or by careful hand-edits to the `.unity`/
+  `.prefab`/`.mat` YAML. There is no regeneration step to fall back on.
 
 ## Working with Unity + git (important)
 
