@@ -69,13 +69,13 @@ public class Hud : MonoBehaviour
             else if (human.HoldingDisc)
             {
                 GUI.Label(new Rect(0, Screen.height - 140f, Screen.width, 24f),
-                    "Hold LEFT-mouse = backhand   ·   RIGHT-mouse = flick", status);
+                    "LEFT = backhand · RIGHT = flick    (tap = fake · hold = throw)", status);
             }
         }
 
         GUI.Label(new Rect(20, Screen.height - 90, 760, 80),
             "Move: WASD / Arrows   •   Aim: mouse   •   V: toggle frisbee / forward cam\n" +
-            "Throw: hold LEFT = backhand / RIGHT = flick (hold = power, release to throw)   •   A / D curve\n" +
+            "Throw: LEFT = backhand / RIGHT = flick — tap = fake, hold = throw (power)   •   A / D curve\n" +
             "Jump: SPACE   •   Layout (dive): SHIFT / F   •   you control the white-ringed player",
             small);
     }

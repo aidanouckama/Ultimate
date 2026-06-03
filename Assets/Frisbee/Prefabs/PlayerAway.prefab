@@ -86,6 +86,7 @@ MonoBehaviour:
   jumpHeight: 1.6
   jumpDuration: 0.65
   jumpReachBonus: 0.7
+  fakeHold: 0.5
   diveSpeed: 12
   diveExtend: 0.5
   diveRecover: 0.7
@@ -107,6 +108,9 @@ MonoBehaviour:
   throwLoft: 0.28
   minThrowSpeed: 5
   maxThrowSpeed: 18
+  markOffset: 1.4
+  forceShade: 1.6
+  fakeBite: 1.8
 --- !u!1 &3438855955285382947
 GameObject:
   m_ObjectHideFlags: 0

@@ -22,6 +22,8 @@ public class HumanController : MonoBehaviour
     public Camera cam;
 
     [Header("Throw tuning")]
+    [Tooltip("Hold shorter than this and release = a pump FAKE; hold longer = a real throw.")]
+    public float fakeTime = 0.18f;
     [Tooltip("Seconds of holding the mouse button to wind up to full power.")]
     public float chargeTime = 0.9f;
     public float minThrowSpeed = 10f;
@@ -31,7 +33,7 @@ public class HumanController : MonoBehaviour
 
     [Header("Step-out")]
     [Tooltip("How far the thrower pivots out to the side while winding up (metres).")]
-    public float stepDistance = 0.7f;
+    public float stepDistance = 1.3f;
     [Tooltip("Seconds for the step-out to reach full extension.")]
     public float stepTime = 0.15f;
 
@@ -52,6 +54,7 @@ public class HumanController : MonoBehaviour
     Material shadowMat;
     bool charging;        // a mouse button is held, winding up a throw
     float charge;         // 0..1 power, fills while the button is held
+    float holdTime;       // seconds the button has been held (< fakeTime on release = fake)
     float curveSpin;      // signed spin wound with A / D, on top of the throw's curve lean
     bool aimingThrow;     // true on frames we hold the disc (HUD shows the throw prompt)
     ThrowKind kind = ThrowKind.Backhand;
@@ -59,8 +62,11 @@ public class HumanController : MonoBehaviour
     Vector3 stepSide;     // unit lateral direction of the step-out (left=BH, right=flick)
     float stepAmt;        // 0..1 eased step-out extension
 
-    /// <summary>Throw power 0..1 while winding up (for the HUD bar), or -1 otherwise.</summary>
-    public float ThrowCharge => charging ? charge : -1f;
+    // committed to a real throw once held past the fake window
+    bool Committed => charging && holdTime >= fakeTime;
+
+    /// <summary>Throw power 0..1 once committed to a throw (for the HUD bar), or -1.</summary>
+    public float ThrowCharge => Committed ? charge : -1f;
 
     /// <summary>True while holding the disc, so the HUD can prompt the throw buttons.</summary>
     public bool HoldingDisc => aimingThrow;
@@ -101,7 +107,12 @@ public class HumanController : MonoBehaviour
         UpdateDiscShadow(mm);
 
         // Play stopped (goal celebration / reset): no moving or throwing.
-        if (!mm.PointLive) { aimingThrow = false; charging = false; stepAmt = 0f; HideAim(); return; }
+        if (!mm.PointLive)
+        {
+            aimingThrow = false; charging = false; stepAmt = 0f; holdTime = 0f; HideAim();
+            if (mm.Controlled != null) mm.Controlled.Winding = false;
+            return;
+        }
 
         Player me = mm.Controlled;
         if (me == null) return;
@@ -141,7 +152,8 @@ public class HumanController : MonoBehaviour
     {
         HideAim();
         aimingThrow = false;
-        charging = false; stepAmt = 0f;   // any interrupted wind-up ends cleanly
+        charging = false; stepAmt = 0f; holdTime = 0f;   // any interrupted wind-up ends cleanly
+        me.Winding = false;
 
         if (me.Busy) return;   // mid-layout: no steering until they're back up
 
@@ -203,39 +215,52 @@ public class HumanController : MonoBehaviour
         var btn = kind == ThrowKind.Backhand ? mouse.leftButton : mouse.rightButton;
         if (btn.isPressed)
         {
+            holdTime += Time.deltaTime;
             charge = Mathf.Clamp01(charge + Time.deltaTime / Mathf.Max(chargeTime, 0.01f));
             curveSpin = Mathf.Clamp(
                 curveSpin + ReadCurveAxis() * curveChargeRate * Time.deltaTime,
                 -maxCurveSpin, maxCurveSpin);
 
-            // pivot out to the side as the wind-up extends — the throw releases from there
+            // pivot out to the side — both a fake and a throw step out the same way (that's
+            // the point: the mark can't tell yet), so the throw releases from there.
             stepAmt = Mathf.MoveTowards(stepAmt, 1f, Time.deltaTime / Mathf.Max(stepTime, 0.01f));
             me.transform.position = stepBase + stepSide * stepDistance * stepAmt;
 
-            DrawCurveHint(mm, ThrowVelocity(charge), EffectiveSpin(), Spec(kind).liftMul);
+            if (Committed) DrawCurveHint(mm, ThrowVelocity(charge), EffectiveSpin(), Spec(kind).liftMul);
+            else HideAim();   // still inside the fake window — don't reveal a throw line yet
         }
-        else   // released → throw from the stepped-out position, then pivot back
+        else
         {
             charging = false;
             HideAim();
-            if (charge > 0.05f)
+            if (holdTime < fakeTime)
             {
+                // quick tap = FAKE: pump and step out toward that side, then recover. The
+                // marker bites; no disc is released, so it's never a turnover.
+                me.Fake(stepSide);
+            }
+            else if (charge > 0.05f)
+            {
+                // held = real THROW, released from the stepped-out position
                 mm.disc.Throw(ThrowVelocity(charge), me.team, EffectiveSpin(), null, Spec(kind).liftMul);
                 me.PlayThrow();
             }
             me.transform.position = stepBase;   // recover the pivot
-            curveSpin = 0f; stepAmt = 0f;
+            curveSpin = 0f; stepAmt = 0f; holdTime = 0f;
+            me.Winding = false;
         }
     }
 
     /// <summary>Begin a wind-up for one throw type, capturing the pivot foot and the side
-    /// to step toward (backhand steps to the thrower's left, flick to the right).</summary>
+    /// to step toward (backhand steps to the thrower's left, flick to the right). Until the
+    /// button is held past <see cref="fakeTime"/> this is indistinguishable from a fake.</summary>
     void StartWindup(Player me, ThrowKind k)
     {
-        charging = true; kind = k; charge = 0f; curveSpin = 0f; stepAmt = 0f;
+        charging = true; kind = k; charge = 0f; holdTime = 0f; curveSpin = 0f; stepAmt = 0f;
         stepBase = me.transform.position;
         Vector3 r = me.transform.right; r.y = 0f; r.Normalize();
         stepSide = (k == ThrowKind.Backhand) ? -r : r;
+        me.Winding = true; me.WindPivot = stepBase;   // camera holds this so the step shows
     }
 
     /// <summary>Launch velocity for a given power level (0..1 from the wind-up): aimed

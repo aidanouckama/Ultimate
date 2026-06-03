@@ -305,6 +305,8 @@ public class AIController : MonoBehaviour
     public float markOffset = 1.4f;
     [Tooltip("How far downfield defenders shade to the force side of their mark.")]
     public float forceShade = 1.6f;
+    [Tooltip("How hard the marker bites on the handler's pump fake (opens the other side).")]
+    public float fakeBite = 1.8f;
 
     void HandleDefense(MatchManager mm)
     {
@@ -318,6 +320,8 @@ public class AIController : MonoBehaviour
             // I'm on the thrower: stand on the force side to take it away and contain the
             // pivot, eyes on the disc. Standing here also keeps the stall count running.
             Vector3 spot = mark.transform.position + new Vector3(force * markOffset, 0f, 0f);
+            // ...but bite on a pump fake — lunge toward the fake, opening the other side.
+            spot += mark.CurrentFake * fakeBite;
             me.MoveToward(spot, 1.1f, faceMove: false);
             me.FaceDir(mark.transform.position - me.transform.position);
         }

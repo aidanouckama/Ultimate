@@ -17,6 +17,9 @@ public class Player : MonoBehaviour
 
     [HideInInspector] public Vector3 aiTarget;   // where the AI currently wants to go
 
+    [HideInInspector] public bool Winding;       // winding up a throw — the camera holds the
+    [HideInInspector] public Vector3 WindPivot;  // pivot foot so the step-out is visible
+
     [Tooltip("Animator on the character-model child. Drives idle / run / throw. " +
              "Wired by the character setup; leave empty for the old capsule look.")]
     public Animator animator;
@@ -29,6 +32,10 @@ public class Player : MonoBehaviour
     public float jumpDuration = 0.65f;
     [Tooltip("A little extra reach while airborne, on top of the higher catch point.")]
     public float jumpReachBonus = 0.7f;
+
+    [Header("Fake (pump fake)")]
+    [Tooltip("How long a pump fake keeps the marker biting toward the fake side.")]
+    public float fakeHold = 0.5f;
 
     [Header("Layout (diving catch — low / wide disc)")]
     [Tooltip("Horizontal lunge speed during a layout dive.")]
@@ -50,6 +57,12 @@ public class Player : MonoBehaviour
     Vector3 diveDir;            // the committed dive line
     float jumpTimer;            // >0: airborne on a vertical jump
     float jumpBaseY;            // ground height to return to on landing
+    Vector3 fakeDir;           // direction of the last pump fake (world, flat)
+    float fakeTimer;           // >0: a fake is still selling, marker biting
+
+    /// <summary>The current fake direction while a pump fake sells, else zero. The
+    /// marking defender reads this and bites toward it, opening the other side.</summary>
+    public Vector3 CurrentFake => fakeTimer > 0f ? fakeDir : Vector3.zero;
 
     /// <summary>True while jumping, diving, or getting back up — controllers stop
     /// steering so the move plays out without input fighting it.</summary>
@@ -190,6 +203,8 @@ public class Player : MonoBehaviour
             recoverTimer -= Time.deltaTime;
         }
 
+        if (fakeTimer > 0f) fakeTimer -= Time.deltaTime;   // the bite wears off
+
         // Jump: a sine arc up and back down. Pure vertical (steering is locked), so the
         // raised transform lifts the catch point to sky a high disc.
         if (jumpTimer > 0f)
@@ -211,6 +226,18 @@ public class Player : MonoBehaviour
         jumpBaseY = transform.position.y;
         jumpTimer = jumpDuration;
         if (animator != null) animator.SetTrigger("Jump");
+    }
+
+    /// <summary>Sell a pump fake toward a direction (the step-out side): the marker bites
+    /// that way for <see cref="fakeHold"/> seconds, opening the opposite side for the real
+    /// throw. Plays the throw motion as the pump, but no disc is released.</summary>
+    public void Fake(Vector3 dir)
+    {
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 1e-4f) return;
+        fakeDir = dir.normalized;
+        fakeTimer = fakeHold;
+        if (animator != null) animator.SetTrigger("Throw");   // reuse the throw as the pump
     }
 
     /// <summary>Lay out (dive) in a direction for a full-extension catch: a committed

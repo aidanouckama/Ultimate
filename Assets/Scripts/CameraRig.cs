@@ -92,7 +92,11 @@ public class CameraRig : MonoBehaviour
         float dist = handler ? handlerDistance : distance;
         float h    = handler ? handlerHeight   : height;
 
-        Vector3 basePos   = target.position;
+        // While winding up a throw, anchor on the pivot foot (not the body) so the
+        // step-out actually reads on screen instead of the camera tracking it away.
+        Vector3 basePos = (mm.Controlled != null && mm.Controlled.Winding)
+            ? mm.Controlled.WindPivot
+            : target.position;
         Vector3 desired   = basePos + Vector3.up * h - rigForward * dist;
         Vector3 lookPoint = basePos + Vector3.up * lookHeight + rigForward * lookAhead;
 
