@@ -43,6 +43,7 @@ public class Disc : MonoBehaviour
     Player thrower;         // who released this throw — can't catch their own disc
     float graceTimer;       // brief window after release: nobody can catch
     float spin;             // signed spin imparted at throw, decays in flight
+    float liftScale = 1f;   // per-throw glide multiplier — low for a hammer (arcs & drops)
 
     void Awake()
     {
@@ -59,8 +60,10 @@ public class Disc : MonoBehaviour
     }
 
     /// <summary>Acceleration applied during flight. Shared with the aim preview
-    /// so the predicted line matches real flight exactly.</summary>
-    public Vector3 Aero(Vector3 v, float spinNow)
+    /// so the predicted line matches real flight exactly. <paramref name="liftMul"/>
+    /// scales the glide for the throw type (≈1 for flat throws, low for a hammer that
+    /// arcs over and drops instead of sailing).</summary>
+    public Vector3 Aero(Vector3 v, float spinNow, float liftMul = 1f)
     {
         Vector3 a = Vector3.down * gravity;
         float speed = v.magnitude;
@@ -68,7 +71,7 @@ public class Disc : MonoBehaviour
         {
             a += -drag * speed * v;                       // drag opposes motion
             Vector3 horiz = new Vector3(v.x, 0f, v.z);
-            a += Vector3.up * lift * horiz.magnitude * speed;   // glide
+            a += Vector3.up * lift * liftMul * horiz.magnitude * speed;   // glide
             // spin curls the disc sideways (perpendicular to travel, in the plane)
             Vector3 side = Vector3.Cross(Vector3.up, horiz.normalized);
             a += side * curl * spinNow * horiz.magnitude;
@@ -101,13 +104,15 @@ public class Disc : MonoBehaviour
         if (state == State.Held) SnapToHand();
     }
 
-    public void Throw(Vector3 velocity, Team team, float spinAmount, Player receiver = null)
+    public void Throw(Vector3 velocity, Team team, float spinAmount, Player receiver = null,
+                      float liftMul = 1f)
     {
         thrower = Holder;           // remember who let it go, before clearing
         Holder = null;
         Receiver = receiver;
         throwerTeam = team;
         spin = spinAmount;
+        liftScale = liftMul;
         state = State.Flying;
         graceTimer = 0.18f;
         rb.isKinematic = false;
@@ -123,7 +128,7 @@ public class Disc : MonoBehaviour
         const float dt = 0.04f;
         for (int i = 0; i < 250; i++)       // up to 10s of flight
         {
-            vel += Aero(vel, s) * dt;
+            vel += Aero(vel, s, liftScale) * dt;
             p += vel * dt;
             s = Mathf.MoveTowards(s, 0f, dt * spinDecay);
             if (p.y <= restHeight) break;
@@ -152,7 +157,7 @@ public class Disc : MonoBehaviour
         if (graceTimer > 0f) graceTimer -= Time.fixedDeltaTime;
         spin = Mathf.MoveTowards(spin, 0f, Time.fixedDeltaTime * spinDecay);
 
-        rb.AddForce(Aero(rb.linearVelocity, spin), ForceMode.Acceleration);
+        rb.AddForce(Aero(rb.linearVelocity, spin, liftScale), ForceMode.Acceleration);
 
         // spin the mesh for visual flair
         transform.Rotate(Vector3.up, 720f * Time.fixedDeltaTime, Space.World);

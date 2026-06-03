@@ -1,12 +1,17 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
+/// <summary>The three basic throws. Each sets a different launch profile (speed, loft,
+/// glide) and a default curve lean the A/D input adds to.</summary>
+public enum ThrowKind { Backhand, Flick, Hammer }
+
 /// <summary>
 /// Translates player input into action for whichever player MatchManager hands us.
 ///  - No disc : WASD / arrows move (camera-relative) to run under the disc.
-///  - Has disc: you're planted (no traveling). Press & DRAG the mouse in the
-///    direction you want to throw, then release to flick it. Drag length = power,
-///    drag direction = throw direction. A dotted line previews the flight.
+///  - Has disc: you're planted (no traveling). AIM with the camera (mouse — toggle the
+///    frisbee cam with V). HOLD LEFT-mouse to wind up a BACKHAND (steps out to your left)
+///    or RIGHT-mouse to wind up a FLICK/forehand (steps out right); hold longer for more
+///    power, release to throw. Hold A / D to curve. A short stub hints the curve.
 ///
 /// Uses the new Input System (UnityEngine.InputSystem), so the project can stay
 /// on Active Input Handling = "Input System Package (New)".
@@ -17,26 +22,67 @@ public class HumanController : MonoBehaviour
     public Camera cam;
 
     [Header("Throw tuning")]
-    [Tooltip("Drag this fraction of screen height for maximum power.")]
-    public float fullPowerDragFraction = 0.35f;
+    [Tooltip("Seconds of holding the mouse button to wind up to full power.")]
+    public float chargeTime = 0.9f;
     public float minThrowSpeed = 10f;
     public float maxThrowSpeed = 27f;
     public float loftBase = 2.5f;
     public float loftScale = 4.0f;
+
+    [Header("Step-out")]
+    [Tooltip("How far the thrower pivots out to the side while winding up (metres).")]
+    public float stepDistance = 0.7f;
+    [Tooltip("Seconds for the step-out to reach full extension.")]
+    public float stepTime = 0.15f;
 
     [Header("Curve")]
     [Tooltip("Hold A / D (or ← / →) while aiming to bend the throw. Max signed spin.")]
     public float maxCurveSpin = 1.4f;
     [Tooltip("How fast the curve winds up to full while the curve key is held.")]
     public float curveChargeRate = 2.2f;
+    [Tooltip("Fraction of the predicted flight drawn as the curve hint. Long enough to " +
+             "show the bend, short enough that the landing spot stays hidden.")]
+    [Range(0.2f, 1f)] public float hintFraction = 0.6f;
+
+    const int HintMaxSteps = 200;
+    readonly Vector3[] hintBuf = new Vector3[HintMaxSteps];   // reused so the hint never allocates
 
     LineRenderer aim;
-    LineRenderer landMarker;
     Transform shadowBlob;      // soft dark shadow under the disc; grows with height
     Material shadowMat;
-    bool aiming;
-    Vector2 dragStart;
-    float curveSpin;     // signed spin charged during the current aim
+    bool charging;        // a mouse button is held, winding up a throw
+    float charge;         // 0..1 power, fills while the button is held
+    float curveSpin;      // signed spin wound with A / D, on top of the throw's curve lean
+    bool aimingThrow;     // true on frames we hold the disc (HUD shows the throw prompt)
+    ThrowKind kind = ThrowKind.Backhand;
+    Vector3 stepBase;     // body position when the windup began, to step back to
+    Vector3 stepSide;     // unit lateral direction of the step-out (left=BH, right=flick)
+    float stepAmt;        // 0..1 eased step-out extension
+
+    /// <summary>Throw power 0..1 while winding up (for the HUD bar), or -1 otherwise.</summary>
+    public float ThrowCharge => charging ? charge : -1f;
+
+    /// <summary>True while holding the disc, so the HUD can prompt the throw buttons.</summary>
+    public bool HoldingDisc => aimingThrow;
+
+    /// <summary>Name of the throw being wound up (for the HUD), e.g. "Backhand".</summary>
+    public string ThrowTypeLabel => Spec(kind).name;
+
+    /// <summary>Launch profile per throw type. speedMul/loftMul scale the base launch;
+    /// curveLean is the default sideways spin the A/D input adds to (backhand and flick
+    /// bend opposite ways); liftMul is the glide handed to the disc (low for a hammer, so
+    /// it arcs over the mark and drops instead of sailing).</summary>
+    struct ThrowSpec { public string name; public float speedMul, loftMul, curveLean, liftMul; }
+
+    static ThrowSpec Spec(ThrowKind k) => k switch
+    {
+        ThrowKind.Flick  => new ThrowSpec { name = "Flick",   speedMul = 1.1f,  loftMul = 0.7f, curveLean =  0.25f, liftMul = 1f },
+        ThrowKind.Hammer => new ThrowSpec { name = "Hammer",  speedMul = 0.85f, loftMul = 2.2f, curveLean = -0.15f, liftMul = 0.25f },
+        _                => new ThrowSpec { name = "Backhand", speedMul = 1f,    loftMul = 1f,   curveLean = -0.25f, liftMul = 1f },
+    };
+
+    /// <summary>The spin actually thrown: the type's built-in lean plus the player's A/D wind.</summary>
+    float EffectiveSpin() => Mathf.Clamp(Spec(kind).curveLean + curveSpin, -2f, 2f);
 
     void Awake()
     {
@@ -55,7 +101,7 @@ public class HumanController : MonoBehaviour
         UpdateDiscShadow(mm);
 
         // Play stopped (goal celebration / reset): no moving or throwing.
-        if (!mm.PointLive) { aiming = false; HideAim(); return; }
+        if (!mm.PointLive) { aimingThrow = false; charging = false; stepAmt = 0f; HideAim(); return; }
 
         Player me = mm.Controlled;
         if (me == null) return;
@@ -78,9 +124,6 @@ public class HumanController : MonoBehaviour
         return mv;
     }
 
-    static Vector2 MousePos() =>
-        Mouse.current != null ? Mouse.current.position.ReadValue() : Vector2.zero;
-
     // +1 curls right, -1 curls left (matches Disc.Aero's sign convention).
     static float ReadCurveAxis()
     {
@@ -97,7 +140,8 @@ public class HumanController : MonoBehaviour
     void HandleMovement(Player me)
     {
         HideAim();
-        aiming = false;
+        aimingThrow = false;
+        charging = false; stepAmt = 0f;   // any interrupted wind-up ends cleanly
 
         if (me.Busy) return;   // mid-layout: no steering until they're back up
 
@@ -142,110 +186,105 @@ public class HumanController : MonoBehaviour
         var mouse = Mouse.current;
         if (mouse == null) return;
 
-        if (mouse.leftButton.wasPressedThisFrame)
+        aimingThrow = true;   // HUD prompts the throw buttons while we hold the disc
+
+        // Always face where the camera aims, so the body points at the throw.
+        me.FaceDir(Flat(cam.transform.forward));
+
+        if (!charging)
         {
-            aiming = true;
-            dragStart = MousePos();
-            curveSpin = 0f;
+            // Start a wind-up: LEFT = backhand (step out left), RIGHT = flick (step right).
+            if (mouse.leftButton.wasPressedThisFrame)       StartWindup(me, ThrowKind.Backhand);
+            else if (mouse.rightButton.wasPressedThisFrame) StartWindup(me, ThrowKind.Flick);
+            return;
         }
 
-        if (aiming && mouse.leftButton.isPressed)
+        // Winding up: which button owns this throw?
+        var btn = kind == ThrowKind.Backhand ? mouse.leftButton : mouse.rightButton;
+        if (btn.isPressed)
         {
-            // wind the curve up/down while you hold A/D, clamped both ways
+            charge = Mathf.Clamp01(charge + Time.deltaTime / Mathf.Max(chargeTime, 0.01f));
             curveSpin = Mathf.Clamp(
                 curveSpin + ReadCurveAxis() * curveChargeRate * Time.deltaTime,
                 -maxCurveSpin, maxCurveSpin);
 
-            Vector3 vel = ThrowVelocity(MousePos() - dragStart);
-            DrawPreview(mm, me, vel, curveSpin);
-            me.FaceDir(Flat(vel));
-        }
+            // pivot out to the side as the wind-up extends — the throw releases from there
+            stepAmt = Mathf.MoveTowards(stepAmt, 1f, Time.deltaTime / Mathf.Max(stepTime, 0.01f));
+            me.transform.position = stepBase + stepSide * stepDistance * stepAmt;
 
-        if (aiming && mouse.leftButton.wasReleasedThisFrame)
+            DrawCurveHint(mm, ThrowVelocity(charge), EffectiveSpin(), Spec(kind).liftMul);
+        }
+        else   // released → throw from the stepped-out position, then pivot back
         {
-            aiming = false;
+            charging = false;
             HideAim();
-            Vector2 drag = MousePos() - dragStart;
-            if (drag.magnitude > 8f)   // ignore an accidental tap
+            if (charge > 0.05f)
             {
-                mm.disc.Throw(ThrowVelocity(drag), me.team, curveSpin);
+                mm.disc.Throw(ThrowVelocity(charge), me.team, EffectiveSpin(), null, Spec(kind).liftMul);
                 me.PlayThrow();
             }
+            me.transform.position = stepBase;   // recover the pivot
+            curveSpin = 0f; stepAmt = 0f;
         }
     }
 
-    /// <summary>Throw by PULLING BACK: drag the mouse opposite the way you want the
-    /// disc to go (like a slingshot / golf swing), then release. Drag distance = power.
-    /// This takes more touch than point-and-click — you judge the launch yourself.</summary>
-    Vector3 ThrowVelocity(Vector2 drag)
+    /// <summary>Begin a wind-up for one throw type, capturing the pivot foot and the side
+    /// to step toward (backhand steps to the thrower's left, flick to the right).</summary>
+    void StartWindup(Player me, ThrowKind k)
     {
-        Vector3 f = Flat(cam.transform.forward);
-        Vector3 r = Flat(cam.transform.right);
+        charging = true; kind = k; charge = 0f; curveSpin = 0f; stepAmt = 0f;
+        stepBase = me.transform.position;
+        Vector3 r = me.transform.right; r.y = 0f; r.Normalize();
+        stepSide = (k == ThrowKind.Backhand) ? -r : r;
+    }
 
-        // pull back to launch forward: the throw goes OPPOSITE the drag direction
-        Vector3 dir = -(f * drag.y + r * drag.x);
-        if (dir.sqrMagnitude < 0.0001f) dir = f;
-        dir.Normalize();
-
-        float power01 = Mathf.Clamp01(drag.magnitude /
-                                      (Screen.height * fullPowerDragFraction));
-        float speed = Mathf.Lerp(minThrowSpeed, maxThrowSpeed, power01);
-        float loft  = loftBase + loftScale * power01;
+    /// <summary>Launch velocity for a given power level (0..1 from the wind-up): aimed
+    /// where the camera looks, with speed and loft scaling off the power and the throw
+    /// type's profile (a flick is flatter and faster than a backhand).</summary>
+    Vector3 ThrowVelocity(float power01)
+    {
+        var t = Spec(kind);
+        Vector3 dir = Flat(cam.transform.forward);
+        float speed = Mathf.Lerp(minThrowSpeed, maxThrowSpeed, power01) * t.speedMul;
+        float loft  = (loftBase + loftScale * power01) * t.loftMul;
         return dir * speed + Vector3.up * loft;
     }
 
-    // --- aim preview ------------------------------------------------------
+    // --- curve hint -------------------------------------------------------
 
-    void DrawPreview(MatchManager mm, Player me, Vector3 v0, float spin)
+    /// <summary>The leading part of the predicted flight, simulated with the disc's OWN
+    /// model (same Aero + spin decay) so the bend matches exactly what the throw will do.
+    /// We draw only the first <see cref="hintFraction"/> of the flight — enough to read
+    /// the curve as it develops, but stopping before the landing so it stays a hint, not
+    /// a guide to the exact spot. (A short stub looks straight because the curl is a
+    /// sideways acceleration: deflection grows with time², so the bend shows up late.)</summary>
+    void DrawCurveHint(MatchManager mm, Vector3 v0, float spin, float liftMul)
     {
-        const int maxSteps = 80;
-        const float dt = 0.045f;
+        const float dt = 0.04f;
         float ground = mm.disc.restHeight;
+
         Vector3 p = mm.disc.transform.position;
         Vector3 v = v0;
-
-        aim.enabled = true;
-        aim.positionCount = maxSteps;     // temporary; trimmed to `count` below
-        int count = 0;
-        aim.SetPosition(count++, p);
-
-        for (int i = 1; i < maxSteps; i++)
+        float s = spin;
+        int n = 0;
+        for (; n < HintMaxSteps; n++)
         {
-            v += mm.disc.Aero(v, spin) * dt;   // same spin as the throw, so the line curls to match
+            hintBuf[n] = p;
+            v += mm.disc.Aero(v, s, liftMul) * dt;   // semi-implicit Euler, matching the disc's flight
             p += v * dt;
-            spin = Mathf.MoveTowards(spin, 0f, dt * mm.disc.spinDecay);   // mirror the in-flight spin decay
-
-            bool landed = p.y <= ground;
-            if (landed) p.y = ground;
-            aim.SetPosition(count++, p);
-            if (landed) break;                 // stop the line at the point it hits the ground
+            s = Mathf.MoveTowards(s, 0f, dt * mm.disc.spinDecay);
+            if (p.y <= ground) { n++; break; }
         }
-        aim.positionCount = count;             // trim to the flight actually drawn
 
-        DrawLandMarker(p, ground);             // small circle where it will land
-    }
-
-    /// <summary>A small flat white ring on the ground marking the predicted landing spot.</summary>
-    void DrawLandMarker(Vector3 center, float ground)
-    {
-        const int seg = 24;
-        const float radius = 0.6f;
-        landMarker.enabled = true;
-        landMarker.positionCount = seg;
-        for (int i = 0; i < seg; i++)
-        {
-            float a = (i / (float)seg) * Mathf.PI * 2f;
-            landMarker.SetPosition(i, new Vector3(
-                center.x + Mathf.Cos(a) * radius,
-                ground + 0.02f,
-                center.z + Mathf.Sin(a) * radius));
-        }
+        int count = Mathf.Clamp(Mathf.RoundToInt(n * hintFraction), 2, n);
+        aim.enabled = true;
+        aim.positionCount = count;
+        for (int i = 0; i < count; i++) aim.SetPosition(i, hintBuf[i]);
     }
 
     void HideAim()
     {
-        aim.enabled = false;
-        landMarker.enabled = false;
+        if (aim != null) aim.enabled = false;
     }
 
     void BuildAimLine()
@@ -259,16 +298,6 @@ public class HumanController : MonoBehaviour
         aim.endColor   = new Color(1f, 1f, 1f, 0.1f);
         aim.numCapVertices = 2;
         aim.enabled = false;
-
-        var ring = new GameObject("LandMarker");
-        ring.transform.SetParent(transform, false);
-        landMarker = ring.AddComponent<LineRenderer>();
-        landMarker.widthMultiplier = 0.07f;
-        landMarker.material = new Material(Shader.Find("Sprites/Default"));
-        landMarker.startColor = landMarker.endColor = Color.white;
-        landMarker.loop = true;            // closed ring
-        landMarker.numCornerVertices = 4;
-        landMarker.enabled = false;
     }
 
     /// <summary>Depth cue for the top-down view: a soft dark shadow on the ground
