@@ -30,9 +30,24 @@ public class MatchManager : MonoBehaviour
              "switches — no more flicker when two players tie for nearest.")]
     public Player humanPlayer;
 
-    public float stallSeconds = 8f;   // how long a holder may keep the disc
+    [Tooltip("How long a marked holder may keep the disc before it's a stall turnover.")]
+    public float stallSeconds = 10f;
+    [Tooltip("A defender must be within this range of the holder for the stall to count " +
+             "— hold freely when wide open, sweat it when someone's on you.")]
+    public float stallRadius = 3.5f;
     float stallTimer;
+    bool holderMarked;
+
+    [Tooltip("Which sideline the defense forces toward: +1 = +X side, -1 = -X side.")]
+    public float forceSign = 1f;
+
     bool pointLive = true;
+
+    /// <summary>True while a defender is close enough to the holder to be counting it.</summary>
+    public bool HolderMarked => holderMarked;
+    /// <summary>The current spoken stall count (1..max) while marked — for the HUD.</summary>
+    public int StallNumber => Mathf.Clamp(Mathf.CeilToInt(stallSeconds - stallTimer), 1, StallMax);
+    public int StallMax => Mathf.CeilToInt(stallSeconds);
 
     [Tooltip("How close a player must get to a loose disc on the ground to pick it up.")]
     public float pickupRadius = 1.6f;
@@ -76,6 +91,18 @@ public class MatchManager : MonoBehaviour
     public List<Player> TeamList(Team t) => t == Team.Home ? home : away;
     public Team Other(Team t) => t == Team.Home ? Team.Away : Team.Home;
 
+    /// <summary>Distance from the holder to the nearest defender (for the stall mark).</summary>
+    float NearestOpponentDist(Player holder)
+    {
+        float best = float.MaxValue;
+        foreach (var d in TeamList(Other(holder.team)))
+        {
+            float dist = (d.transform.position - holder.transform.position).sqrMagnitude;
+            if (dist < best) best = dist;
+        }
+        return best == float.MaxValue ? float.MaxValue : Mathf.Sqrt(best);
+    }
+
     void Update()
     {
         UpdateControlledPlayer();
@@ -83,14 +110,20 @@ public class MatchManager : MonoBehaviour
 
         if (pointLive && disc.state == Disc.State.Held && disc.Holder != null)
         {
-            stallTimer -= Time.deltaTime;
-            if (stallTimer <= 0f)
+            // The stall only runs while a defender is marking (within range).
+            holderMarked = NearestOpponentDist(disc.Holder) <= stallRadius;
+            if (holderMarked)
             {
-                // stall: turnover on the spot
-                statusLine = "STALL — turnover!";
-                Turnover(disc.Holder.transform.position);
+                stallTimer -= Time.deltaTime;
+                if (stallTimer <= 0f)
+                {
+                    // stall: turnover on the spot
+                    statusLine = "STALL — turnover!";
+                    Turnover(disc.Holder.transform.position);
+                }
             }
         }
+        else holderMarked = false;
 
         // a loose disc on the ground gets picked up by the team in possession
         if (pointLive && disc.state == Disc.State.Loose)
@@ -177,6 +210,14 @@ public class MatchManager : MonoBehaviour
         }
         statusLine = "Completion.";
         GiveDisc(catcher);
+    }
+
+    /// <summary>A defender (or a contesting player) got a hand on the disc in flight and
+    /// knocked it down — the disc stays live. Just feedback; the disc handles the physics.</summary>
+    public void OnTip(Player tipper)
+    {
+        if (!pointLive) return;
+        statusLine = $"Tipped by {tipper.team}!";
     }
 
     /// <summary>The disc hit the ground untouched — always a turnover. TurnoverSpot

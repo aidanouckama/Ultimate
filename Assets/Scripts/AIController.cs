@@ -300,20 +300,37 @@ public class AIController : MonoBehaviour
 
     // --- defense ----------------------------------------------------------
 
+    [Header("Defense")]
+    [Tooltip("How far to the force side of the handler the marker stands (takes that side away).")]
+    public float markOffset = 1.4f;
+    [Tooltip("How far downfield defenders shade to the force side of their mark.")]
+    public float forceShade = 1.6f;
+
     void HandleDefense(MatchManager mm)
     {
         Player mark = NearestOpponent(mm);
         if (mark == null) return;
 
-        // stand between your mark and the end zone they're attacking
-        float oppDir = mm.field.AttackDir(mark.team);
-        Vector3 goalSide = mark.transform.position + new Vector3(0f, 0f, oppDir * 2.5f);
+        float force = mm.forceSign;   // +1 = take away the +X side, force the throw to -X
 
-        // Cover the space, but keep your eyes on the disc rather than turning to run
-        // face-first at the spot. Moving away from the disc now reads as a backpedal and
-        // moving across it as a strafe, so the directional anims actually play.
-        me.MoveToward(goalSide, 1.0f, faceMove: false);
-        me.FaceDir(mm.disc.transform.position - me.transform.position);
+        if (mm.disc.Holder == mark)
+        {
+            // I'm on the thrower: stand on the force side to take it away and contain the
+            // pivot, eyes on the disc. Standing here also keeps the stall count running.
+            Vector3 spot = mark.transform.position + new Vector3(force * markOffset, 0f, 0f);
+            me.MoveToward(spot, 1.1f, faceMove: false);
+            me.FaceDir(mark.transform.position - me.transform.position);
+        }
+        else
+        {
+            // Downfield: stay goal-side of my mark and shade the force side so the forced
+            // throws come into help. Watch the disc; moving reads as backpedal / strafe.
+            float oppDir = mm.field.AttackDir(mark.team);
+            Vector3 spot = mark.transform.position
+                         + new Vector3(force * forceShade, 0f, oppDir * 2.5f);
+            me.MoveToward(spot, 1.0f, faceMove: false);
+            me.FaceDir(mm.disc.transform.position - me.transform.position);
+        }
     }
 
     Player NearestOpponent(MatchManager mm)

@@ -28,6 +28,11 @@ public class Disc : MonoBehaviour
     [Header("Geometry")]
     public float restHeight = 0.06f;   // disc thickness / 2
 
+    [Header("Contest")]
+    [Tooltip("A player who reaches within this margin BEYOND their catch radius doesn't " +
+             "catch cleanly — they tip the disc (knock it down), and it stays live.")]
+    public float tipMargin = 0.9f;
+
     public State state = State.Loose;
     public Player Holder { get; private set; }
 
@@ -177,8 +182,8 @@ public class Disc : MonoBehaviour
 
     void TryCatch()
     {
-        Player best = null;
-        float bestDist = float.MaxValue;
+        Player catcher = null; float catchDist = float.MaxValue;
+        Player tipper  = null; float tipDist   = float.MaxValue;
         Vector3 dp = rb.position;
 
         foreach (var pl in MatchManager.I.players)
@@ -188,15 +193,41 @@ public class Disc : MonoBehaviour
             Vector3 d = pl.transform.position - dp;
             d.y *= 0.5f;                         // jumping/extension is cheap vertically
             float dist = d.magnitude;
-            if (dist <= reach && dist < bestDist)
+
+            if (dist <= reach)                   // clean catch range
             {
-                bestDist = dist;
-                best = pl;
+                if (dist < catchDist) { catchDist = dist; catcher = pl; }
+            }
+            else if (dist <= reach + tipMargin)  // just out of control — a tip
+            {
+                if (dist < tipDist) { tipDist = dist; tipper = pl; }
             }
         }
 
-        if (best != null)
-            MatchManager.I.OnCatch(best, throwerTeam);
+        if (catcher != null)
+            MatchManager.I.OnCatch(catcher, throwerTeam);
+        else if (tipper != null)
+            Tip(tipper);
+    }
+
+    /// <summary>A player got fingers on the disc but couldn't reel it in: knock it down —
+    /// kill most of its speed, pop it off their hand and toward the ground. It stays
+    /// flying (now live for everyone, including the original thrower) so it can be run
+    /// down, re-caught, or fall for a turnover.</summary>
+    void Tip(Player p)
+    {
+        Vector3 away = rb.position - p.transform.position; away.y = 0f;
+        away = away.sqrMagnitude > 1e-3f ? away.normalized : Vector3.forward;
+
+        Vector3 v = rb.linearVelocity * 0.25f;   // big speed loss off the contact
+        v += away * 2f;                          // deflects off the hand
+        v.y = -2f;                               // knocked downward
+        rb.linearVelocity = v;
+
+        spin = 0f;
+        thrower = null;          // it's been touched — anyone may now play it
+        graceTimer = 0.12f;      // brief window so it doesn't re-tip on the same frame
+        MatchManager.I.OnTip(p);
     }
 
     public Team ThrowerTeam => throwerTeam;

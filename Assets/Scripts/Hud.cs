@@ -33,6 +33,16 @@ public class Hud : MonoBehaviour
 
         GUI.Label(new Rect(0, 56, Screen.width, 30), mm.statusLine, status);
 
+        // stall count — only while a defender is marking the holder; reddens as it climbs
+        if (mm.HolderMarked)
+        {
+            var prev = GUI.color;
+            GUI.color = Color.Lerp(Color.white, new Color(1f, 0.3f, 0.2f),
+                                   mm.StallNumber / (float)mm.StallMax);
+            GUI.Label(new Rect(0, 88, Screen.width, 34), $"STALL  {mm.StallNumber}", status);
+            GUI.color = prev;
+        }
+
         // camera mode tag (top-right)
         if (rig != null)
             GUI.Label(new Rect(Screen.width - 230, 16, 210, 24),
