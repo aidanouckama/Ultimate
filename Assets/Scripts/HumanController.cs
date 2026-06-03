@@ -99,11 +99,40 @@ public class HumanController : MonoBehaviour
         HideAim();
         aiming = false;
 
+        if (me.Busy) return;   // mid-layout: no steering until they're back up
+
         Vector2 mv = ReadMoveAxis();
         Vector3 f = Flat(cam.transform.forward);
         Vector3 r = Flat(cam.transform.right);
         Vector3 dir = f * mv.y + r * mv.x;
-        me.MoveDir(dir);
+
+        var mm = MatchManager.I;
+        var kb = Keyboard.current;
+
+        // SPACE = jump (vertical) — sky a high disc above a defender.
+        if (kb != null && kb.spaceKey.wasPressedThisFrame)
+        {
+            me.Jump();
+            return;
+        }
+
+        // SHIFT / F = lay out (horizontal dive): toward the disc if it's airborne, else
+        // the way you're running. A committed full-extension bid — locked until you're up.
+        if (kb != null && (kb.leftShiftKey.wasPressedThisFrame || kb.fKey.wasPressedThisFrame))
+        {
+            Vector3 to = (mm != null && mm.disc.state == Disc.State.Flying)
+                         ? mm.disc.transform.position - me.transform.position
+                         : dir;
+            me.Layout(to);
+            return;
+        }
+
+        // On defence, face the disc (you read as a backpedalling / shuffling defender);
+        // on offence, face where you run. Movement stays camera-relative either way.
+        bool defending = mm != null && mm.disc != null && mm.possession != me.team;
+        me.MoveDir(dir, 1f, faceMove: !defending);
+        if (defending)
+            me.FaceDir(mm.disc.transform.position - me.transform.position);
     }
 
     // --- throwing ---------------------------------------------------------

@@ -83,7 +83,13 @@ MonoBehaviour:
   HandPoint: {fileID: 5789824574768199023}
   aiTarget: {x: 0, y: 0, z: 0}
   animator: {fileID: 330836433652472265}
-  legCyclePerSpeed: 0.34
+  jumpHeight: 1.6
+  jumpDuration: 0.65
+  jumpReachBonus: 0.7
+  diveSpeed: 12
+  diveExtend: 0.5
+  diveRecover: 0.7
+  diveCatchRadius: 4.2
 --- !u!114 &7386078616448608469
 MonoBehaviour:
   m_ObjectHideFlags: 0

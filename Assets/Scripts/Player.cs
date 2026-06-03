@@ -21,16 +21,46 @@ public class Player : MonoBehaviour
              "Wired by the character setup; leave empty for the old capsule look.")]
     public Animator animator;
 
-    [Tooltip("Run-cycle playback speed per unit of ground speed. Raise it if the feet " +
-             "skate (legs too slow for the movement); lower it if they churn too fast. " +
-             "Higher values also make a sped-up walk read as a run.")]
-    public float legCyclePerSpeed = 0.34f;
+    [Header("Jump (vertical catch — high disc)")]
+    [Tooltip("Peak height of the hop. The raised body lifts the catch point so you can " +
+             "sky a disc above a defender.")]
+    public float jumpHeight = 1.6f;
+    [Tooltip("Time from takeoff to landing.")]
+    public float jumpDuration = 0.65f;
+    [Tooltip("A little extra reach while airborne, on top of the higher catch point.")]
+    public float jumpReachBonus = 0.7f;
+
+    [Header("Layout (diving catch — low / wide disc)")]
+    [Tooltip("Horizontal lunge speed during a layout dive.")]
+    public float diveSpeed = 12f;
+    [Tooltip("How long the full-extension reach lasts (the dive itself).")]
+    public float diveExtend = 0.5f;
+    [Tooltip("Lockout after landing while the player gets back up (can't move or dive).")]
+    public float diveRecover = 0.7f;
+    [Tooltip("Catch radius while laid out — the extra reach is the whole point of a layout.")]
+    public float diveCatchRadius = 4.2f;
 
     Renderer rend;
     Color baseColor;
     LineRenderer controlRing;   // white ring on the ground marking the human's player
-    Vector3 lastAnimPos;        // previous position, to derive run speed for the animator
+    Vector3 lastAnimPos;        // previous position, to derive velocity for the animator
     bool lastAnimPosInit;
+    float extendTimer;          // >0: laid out, lunging with extended reach
+    float recoverTimer;         // >0: down on the ground, getting back up (locked out)
+    Vector3 diveDir;            // the committed dive line
+    float jumpTimer;            // >0: airborne on a vertical jump
+    float jumpBaseY;            // ground height to return to on landing
+
+    /// <summary>True while jumping, diving, or getting back up — controllers stop
+    /// steering so the move plays out without input fighting it.</summary>
+    public bool Busy => extendTimer > 0f || recoverTimer > 0f || jumpTimer > 0f;
+
+    /// <summary>Catch reach right now. A layout extends it a lot (wide horizontal grab);
+    /// a jump adds a little (the real gain there is the raised catch point). The disc
+    /// reads this when testing catches.</summary>
+    public float CatchReach =>
+        extendTimer > 0f ? diveCatchRadius :
+        jumpTimer   > 0f ? catchRadius + jumpReachBonus : catchRadius;
 
     void Awake()
     {
@@ -75,8 +105,12 @@ public class Player : MonoBehaviour
         controlRing.enabled = false;
     }
 
-    /// <summary>Move toward a world point this frame, staying upright.</summary>
-    public void MoveToward(Vector3 worldTarget, float speedScale = 1f)
+    /// <summary>Move toward a world point this frame, staying upright. Pass
+    /// <paramref name="faceMove"/> = false to keep moving without turning to face the
+    /// travel direction — the caller then sets facing itself (e.g. a defender who
+    /// watches the disc while backpedalling), which the 2D blend tree reads as a
+    /// backpedal / strafe instead of a forward run.</summary>
+    public void MoveToward(Vector3 worldTarget, float speedScale = 1f, bool faceMove = true)
     {
         Vector3 to = worldTarget - transform.position;
         to.y = 0f;
@@ -85,18 +119,19 @@ public class Player : MonoBehaviour
         {
             Vector3 dir = to.normalized;
             transform.position += dir * Mathf.Min(step, to.magnitude);
-            FaceDir(dir);
+            if (faceMove) FaceDir(dir);
         }
     }
 
-    /// <summary>Move along a direction vector this frame.</summary>
-    public void MoveDir(Vector3 dir, float speedScale = 1f)
+    /// <summary>Move along a direction vector this frame. See <see cref="MoveToward"/>
+    /// for <paramref name="faceMove"/>.</summary>
+    public void MoveDir(Vector3 dir, float speedScale = 1f, bool faceMove = true)
     {
         dir.y = 0f;
         if (dir.sqrMagnitude < 0.0001f) return;
         dir.Normalize();
         transform.position += dir * moveSpeed * speedScale * Time.deltaTime;
-        FaceDir(dir);
+        if (faceMove) FaceDir(dir);
     }
 
     public void FaceDir(Vector3 dir)
@@ -117,17 +152,78 @@ public class Player : MonoBehaviour
         if (animator == null) return;
         if (!lastAnimPosInit) { lastAnimPos = transform.position; lastAnimPosInit = true; }
         float dt = Mathf.Max(Time.deltaTime, 1e-4f);
-        float speed = (transform.position - lastAnimPos).magnitude / dt;
+
+        // Velocity of the (script-driven) transform, expressed in the body's OWN frame.
+        // local.z is how fast we move the way we face (forward/back), local.x is sideways.
+        // The 2D directional blend tree reads these, so a player who faces the disc while
+        // moving away from it reads as a backpedal, and one shuffling sideways strafes.
+        Vector3 worldVel = (transform.position - lastAnimPos) / dt;
         lastAnimPos = transform.position;
-        animator.SetFloat("Speed", speed, 0.1f, dt);   // damped so it eases in/out
-        // match the run cadence to the ground speed so the feet plant instead of slide
-        animator.SetFloat("LegSpeed", Mathf.Clamp(speed * legCyclePerSpeed, 0.5f, 3.5f));
+        Vector3 local = transform.InverseTransformDirection(worldVel);
+
+        // Damped so the blend eases between clips instead of snapping.
+        animator.SetFloat("MoveX", local.x, 0.1f, dt);
+        animator.SetFloat("MoveZ", local.z, 0.1f, dt);
     }
 
     /// <summary>Fire the throw animation. Called the instant a throw is released.</summary>
     public void PlayThrow()
     {
         if (animator != null) animator.SetTrigger("Throw");
+    }
+
+    /// <summary>Drive the dive: a quick committed lunge with extended reach, then a
+    /// brief lockout while getting up. Movement is transform-only (no physics), like the
+    /// rest of the game, so the diver stays at standing height and just slides along the
+    /// dive line — the animation sells the layout.</summary>
+    void Update()
+    {
+        // Layout: lunge along the dive line, then a ground recovery.
+        if (extendTimer > 0f)
+        {
+            extendTimer -= Time.deltaTime;
+            transform.position += diveDir * diveSpeed * Time.deltaTime;
+            if (extendTimer <= 0f) recoverTimer = diveRecover;   // hit the ground → get up
+        }
+        else if (recoverTimer > 0f)
+        {
+            recoverTimer -= Time.deltaTime;
+        }
+
+        // Jump: a sine arc up and back down. Pure vertical (steering is locked), so the
+        // raised transform lifts the catch point to sky a high disc.
+        if (jumpTimer > 0f)
+        {
+            jumpTimer -= Time.deltaTime;
+            float t = Mathf.Clamp01(1f - jumpTimer / jumpDuration);   // 0 → 1 over the hop
+            var p = transform.position;
+            p.y = jumpBaseY + jumpHeight * Mathf.Sin(Mathf.PI * t);
+            if (jumpTimer <= 0f) p.y = jumpBaseY;                     // settle exactly on land
+            transform.position = p;
+        }
+    }
+
+    /// <summary>Jump straight up to catch a high disc — the raised body lifts the catch
+    /// point above defenders. No-op if already busy; steering locks until you land.</summary>
+    public void Jump()
+    {
+        if (Busy) return;
+        jumpBaseY = transform.position.y;
+        jumpTimer = jumpDuration;
+        if (animator != null) animator.SetTrigger("Jump");
+    }
+
+    /// <summary>Lay out (dive) in a direction for a full-extension catch: a committed
+    /// lunge with a much longer <see cref="CatchReach"/>, then a recovery on the ground.
+    /// No-op if already busy. Steering is locked (<see cref="Busy"/>) until recovered.</summary>
+    public void Layout(Vector3 dir)
+    {
+        if (Busy) return;
+        dir.y = 0f;
+        diveDir = dir.sqrMagnitude > 1e-4f ? dir.normalized : transform.forward;
+        transform.rotation = Quaternion.LookRotation(diveDir);   // commit to the dive line
+        extendTimer = diveExtend;
+        if (animator != null) animator.SetTrigger("Dive");
     }
 
     /// <summary>Pivot height when standing (capsule half-height). The disc lands at

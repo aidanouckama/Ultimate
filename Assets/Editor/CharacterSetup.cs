@@ -9,8 +9,9 @@ using UnityEngine;
 /// One-shot helper that turns the staged Quaternius assets in Assets/Characters
 /// into playable team players:
 ///   1. Sets the body + animation FBX rigs to Humanoid (so anims retarget).
-///   2. Picks idle / run / throw clips out of the animation library.
-///   3. Builds a small Animator Controller (Idle &lt;-&gt; Run, Any -&gt; Throw).
+///   2. Picks idle / run / backward / strafe / throw clips out of the library.
+///   3. Builds a small Animator Controller: a 2D directional blend tree
+///      (forward / backpedal / strafe, driven by MoveX·MoveZ) plus Any -&gt; Throw / Dive / Jump.
 ///   4. Makes flat blue/red team materials.
 ///   5. Rebuilds the EXISTING PlayerHome / PlayerAway prefabs (same GUIDs) so every
 ///      instance already in the scene swaps from capsule to character automatically.
@@ -83,16 +84,29 @@ public static class CharacterSetup
         };
 
         AnimationClip idle  = pick(new[] { "idle", "breath", "stand" });
-        // A dropped-in "run"/"sprint"/"jog" wins; otherwise fall back to a forward
-        // walk (sped up via LegSpeed). Avoid Walk_Carry (cradling pose).
-        AnimationClip run   = pick(new[] { "run", "sprint", "jog", "walk_fwd", "zombie_walk", "walk" });
-        AnimationClip throwC = pick(new[] { "throw", "pitch", "overhand", "pickup", "interact" });
+        // Forward locomotion (two speeds) feeds the +Z axis of a 2D directional tree.
+        AnimationClip slowRun = pick(new[] { "slow run", "slow_run", "slowrun", "jog" });
+        AnimationClip fastRun = pick(new[] { "fast run", "fast_run", "fastrun", "sprint" });
+        AnimationClip anyRun  = pick(new[] { "running", "run", "walk_fwd", "zombie_walk", "walk" });
+        // Directional clips fill the other axes of the 2D tree. "backward" (not bare
+        // "back", which would grab "Run Look Back"); "right"/"left" take a turn or a
+        // strafe. Left is usually absent (mirror-export a Right, or grab a Left Strafe).
+        AnimationClip backward = pick(new[] { "backward", "back run", "run back", "backpedal" });
+        AnimationClip right    = pick(new[] { "strafe right", "right strafe", "right turn", "right" });
+        AnimationClip left     = pick(new[] { "strafe left", "left strafe", "left turn", "left" });
+        AnimationClip throwC   = pick(new[] { "throw", "pitch", "overhand", "pickup", "interact" });
+        AnimationClip diveC    = pick(new[] { "dive", "layout" });          // horizontal layout
+        AnimationClip jumpC    = pick(new[] { "jump_start", "jump", "leap" });   // vertical jump
         if (idle == null) idle = entries.Select(e => e.clip).FirstOrDefault();
-        if (run  == null) run  = idle;
-        Debug.Log($"[CharacterSetup] idle={Name(idle)}  run={Name(run)}  throw={Name(throwC)}");
+        // Degrade gracefully: missing a fast clip → use any run; missing slow → reuse fast.
+        if (fastRun == null) fastRun = anyRun ?? slowRun ?? idle;
+        if (slowRun == null) slowRun = fastRun;
+        Debug.Log($"[CharacterSetup] idle={Name(idle)}  slow={Name(slowRun)}  fast={Name(fastRun)}  " +
+                  $"back={Name(backward)}  right={Name(right)}  left={Name(left)}  " +
+                  $"throw={Name(throwC)}  dive={Name(diveC)}  jump={Name(jumpC)}");
 
-        // 3. animator controller
-        var controller = BuildController(idle, run, throwC);
+        // 3. animator controller (2D directional blend tree + any-state throw/dive/jump)
+        var controller = BuildController(idle, slowRun, fastRun, backward, right, left, throwC, diveC, jumpC);
 
         // 4. team materials
         EnsureFolder(CharRoot, "Materials");
@@ -108,7 +122,7 @@ public static class CharacterSetup
         EditorUtility.DisplayDialog("Frisbee",
             "Characters set up:\n" +
             "• rigs → Humanoid\n" +
-            "• animator: Idle / Run / Throw\n" +
+            "• animator: 2D directional tree (fwd/back/strafe) + Throw + Dive + Jump\n" +
             "• blue/red team materials\n" +
             "• PlayerHome & PlayerAway prefabs rebuilt\n\n" +
             "Open Assets/Frisbee/Scenes/Frisbee.unity and press Play.\n" +
@@ -130,13 +144,27 @@ public static class CharacterSetup
 
         if (loopLocomotion && (mi.clipAnimations == null || mi.clipAnimations.Length == 0))
         {
+            // Mixamo names every clip "mixamo.com", so the clip name alone won't tell us
+            // it's a run. Fall back to the source file name (e.g. "Fast Run.fbx").
+            string fn = System.IO.Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
+            bool fileIsLoco = fn.Contains("run") || fn.Contains("walk") || fn.Contains("jog") ||
+                              fn.Contains("sprint") || fn.Contains("idle");
+            // A file tagged "(mirror)" is a left/right flip of another clip — Unity's
+            // humanoid retargeting can mirror it for us, so we don't need a real
+            // mirror-exported FBX (which Mixamo's toggle doesn't always produce).
+            bool fileIsMirror = fn.Contains("mirror");
+            // One-shots must NOT loop even though their name contains "run" (e.g. "Run To
+            // Dive", "Run Look Back") — they play once and hand back to the blend tree.
+            bool fileIsOneShot = fn.Contains("dive") || fn.Contains("look back");
+
             var defs = mi.defaultClipAnimations;          // start from the auto-split clips
             for (int i = 0; i < defs.Length; i++)
             {
                 string n = defs[i].name.ToLowerInvariant();
-                if (n.Contains("idle") || n.Contains("walk") || n.Contains("run") ||
-                    n.Contains("jog")  || n.Contains("sprint") || n.Contains("breath"))
-                    defs[i].loopTime = true;
+                bool clipIsLoco = n.Contains("idle") || n.Contains("walk") || n.Contains("run") ||
+                                  n.Contains("jog")  || n.Contains("sprint") || n.Contains("breath");
+                if ((clipIsLoco || fileIsLoco) && !fileIsOneShot) defs[i].loopTime = true;
+                if (fileIsMirror)                                 defs[i].mirror   = true;
             }
             mi.clipAnimations = defs;                     // commit overrides with loop enabled
             needsReimport = true;
@@ -150,32 +178,60 @@ public static class CharacterSetup
 
     // ---- animator controller --------------------------------------------------
 
-    static AnimatorController BuildController(AnimationClip idle, AnimationClip run, AnimationClip throwC)
+    // Blend-tree positions, in the same units as the player's measured ground speed
+    // (Player.moveSpeed is 7.5, AI cutters push ~1.2× that). MoveX/MoveZ are the body's
+    // local velocity, so each clip plants its feet at the pace it was authored for
+    // instead of skating, and the tree picks the right one by direction.
+    const float SlowRunSpeed = 3.75f;
+    const float FastRunSpeed = 7.5f;
+    // Start the layout clip this far in (0–1) to skip "Run To Dive"'s run-up. ~0 with a
+    // dedicated flat-dive clip.
+    const float DiveStartOffset = 0.5f;
+
+    static AnimatorController BuildController(AnimationClip idle, AnimationClip slowRun,
+                                              AnimationClip fastRun, AnimationClip backward,
+                                              AnimationClip right, AnimationClip left,
+                                              AnimationClip throwC, AnimationClip diveC,
+                                              AnimationClip jumpC)
     {
         var c = AnimatorController.CreateAnimatorControllerAtPath(ControllerPath);
-        c.AddParameter("Speed", AnimatorControllerParameterType.Float);
+        c.AddParameter("MoveX", AnimatorControllerParameterType.Float);   // strafe (local +x = right)
+        c.AddParameter("MoveZ", AnimatorControllerParameterType.Float);   // fwd/back (local +z = forward)
         c.AddParameter("Throw", AnimatorControllerParameterType.Trigger);
-        // playback-speed multiplier for the run cycle, so foot cadence matches the
-        // (script-driven) ground speed instead of skating. Player feeds it each frame.
-        c.AddParameter(new AnimatorControllerParameter
-        {
-            name = "LegSpeed", type = AnimatorControllerParameterType.Float, defaultFloat = 1f
-        });
+        // Declared even if no clip matched, so Player's SetTrigger calls never warn.
+        c.AddParameter("Dive",  AnimatorControllerParameterType.Trigger);
+        c.AddParameter("Jump",  AnimatorControllerParameterType.Trigger);
 
         var sm = c.layers[0].stateMachine;
-        var sIdle = sm.AddState("Idle"); sIdle.motion = idle;
-        var sRun  = sm.AddState("Run");  sRun.motion  = run;
-        sRun.speedParameterActive = true;          // Run plays at LegSpeed×
-        sRun.speedParameter = "LegSpeed";
-        sm.defaultState = sIdle;
+        var sLoco = c.CreateBlendTreeInController("Locomotion", out BlendTree tree, 0);
+        tree.useAutomaticThresholds = false;
 
-        var toRun = sIdle.AddTransition(sRun);
-        toRun.hasExitTime = false; toRun.duration = 0.12f;
-        toRun.AddCondition(AnimatorConditionMode.Greater, 0.6f, "Speed");
-
-        var toIdle = sRun.AddTransition(sIdle);
-        toIdle.hasExitTime = false; toIdle.duration = 0.12f;
-        toIdle.AddCondition(AnimatorConditionMode.Less, 0.6f, "Speed");
+        bool has2D = backward != null || right != null || left != null;
+        if (has2D)
+        {
+            // 2D directional: the body can run forward, backpedal, or shuffle sideways,
+            // chosen by which way it's actually moving relative to where it faces.
+            tree.blendType = BlendTreeType.FreeformDirectional2D;
+            tree.blendParameter  = "MoveX";
+            tree.blendParameterY = "MoveZ";
+            tree.AddChild(idle, new Vector2(0f, 0f));
+            if (slowRun != null) tree.AddChild(slowRun, new Vector2(0f,  SlowRunSpeed));
+            if (fastRun != null) tree.AddChild(fastRun, new Vector2(0f,  FastRunSpeed));
+            if (backward != null) tree.AddChild(backward, new Vector2(0f, -FastRunSpeed));
+            if (right != null)    tree.AddChild(right,    new Vector2( FastRunSpeed, 0f));
+            if (left != null)     tree.AddChild(left,     new Vector2(-FastRunSpeed, 0f));
+        }
+        else
+        {
+            // Only forward clips on hand → a plain speed tree along the forward axis.
+            tree.blendType = BlendTreeType.Simple1D;
+            tree.blendParameter = "MoveZ";
+            tree.AddChild(idle, 0f);
+            if (slowRun != null && slowRun != fastRun) tree.AddChild(slowRun, SlowRunSpeed);
+            if (fastRun != null)      tree.AddChild(fastRun, FastRunSpeed);
+            else if (slowRun != null) tree.AddChild(slowRun, FastRunSpeed);
+        }
+        sm.defaultState = sLoco;
 
         if (throwC != null)
         {
@@ -184,8 +240,36 @@ public static class CharacterSetup
             any.hasExitTime = false; any.duration = 0.05f; any.canTransitionToSelf = false;
             any.AddCondition(AnimatorConditionMode.If, 0f, "Throw");
 
-            var back = sThrow.AddTransition(sIdle);
+            var back = sThrow.AddTransition(sLoco);   // return to the blend tree when done
             back.hasExitTime = true; back.exitTime = 0.85f; back.duration = 0.12f;
+        }
+
+        if (diveC != null)
+        {
+            // One-shot layout (horizontal dive). The only dive clip we have is "Run To
+            // Dive", which runs up first — so start playback partway through (transition
+            // offset) to skip the run-up and land on the dive itself. Tune DiveStartOffset
+            // or swap in a dedicated flat-dive clip for a cleaner look.
+            var sDive = sm.AddState("Dive"); sDive.motion = diveC;
+            var any = sm.AddAnyStateTransition(sDive);
+            any.hasExitTime = false; any.duration = 0.05f; any.canTransitionToSelf = false;
+            any.offset = DiveStartOffset;
+            any.AddCondition(AnimatorConditionMode.If, 0f, "Dive");
+
+            var back = sDive.AddTransition(sLoco);
+            back.hasExitTime = true; back.exitTime = 0.9f; back.duration = 0.2f;
+        }
+
+        if (jumpC != null)
+        {
+            // One-shot vertical jump (UAL2 "NinjaJump_Start" — the leap up).
+            var sJump = sm.AddState("Jump"); sJump.motion = jumpC;
+            var any = sm.AddAnyStateTransition(sJump);
+            any.hasExitTime = false; any.duration = 0.05f; any.canTransitionToSelf = false;
+            any.AddCondition(AnimatorConditionMode.If, 0f, "Jump");
+
+            var back = sJump.AddTransition(sLoco);
+            back.hasExitTime = true; back.exitTime = 0.8f; back.duration = 0.15f;
         }
 
         EditorUtility.SetDirty(c);

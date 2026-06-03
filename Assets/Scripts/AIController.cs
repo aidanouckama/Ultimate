@@ -28,6 +28,7 @@ public class AIController : MonoBehaviour
         if (mm == null) return;
         if (!mm.PointLive) return;          // play stopped (goal/reset) — everyone freezes
         if (mm.Controlled == me) return;    // human is driving this one
+        if (me.Busy) return;                // mid-layout — let the dive play out
 
         bool myTeamHasIt = mm.disc.Holder != null && mm.disc.Holder.team == me.team;
 
@@ -238,8 +239,24 @@ public class AIController : MonoBehaviour
         }
         Player goTo = mm.disc.Receiver != null ? mm.disc.Receiver
                                                : NearestToSpot(mm, me.team, spot);
-        if (goTo == me) me.MoveToward(spot, 1.2f);
-        else            HandleCutter(mm);
+        if (goTo == me)
+        {
+            // Bid for a tough grab instead of arriving a step short:
+            //  - high disc, close in → jump (sky it)
+            //  - low/wide disc just out of reach → lay out (dive)
+            Vector3 dp = mm.disc.transform.position;
+            Vector3 toDisc = dp - me.transform.position;
+            float horiz = new Vector3(toDisc.x, 0f, toDisc.z).magnitude;
+            bool high = dp.y > Player.StandHeight + 1.2f;
+
+            if (high && horiz < me.catchRadius + 0.8f)
+                me.Jump();
+            else if (!high && horiz > me.catchRadius && horiz < me.diveCatchRadius * 0.95f)
+                me.Layout(toDisc);
+            else
+                me.MoveToward(spot, 1.2f);
+        }
+        else HandleCutter(mm);
     }
 
     Player NearestToSpot(MatchManager mm, Team team, Vector3 spot)
@@ -291,7 +308,12 @@ public class AIController : MonoBehaviour
         // stand between your mark and the end zone they're attacking
         float oppDir = mm.field.AttackDir(mark.team);
         Vector3 goalSide = mark.transform.position + new Vector3(0f, 0f, oppDir * 2.5f);
-        me.MoveToward(goalSide, 1.0f);
+
+        // Cover the space, but keep your eyes on the disc rather than turning to run
+        // face-first at the spot. Moving away from the disc now reads as a backpedal and
+        // moving across it as a strafe, so the directional anims actually play.
+        me.MoveToward(goalSide, 1.0f, faceMove: false);
+        me.FaceDir(mm.disc.transform.position - me.transform.position);
     }
 
     Player NearestOpponent(MatchManager mm)

@@ -25,9 +25,10 @@ public class Hud : MonoBehaviour
 
         GUI.Label(new Rect(0, 56, Screen.width, 30), mm.statusLine, status);
 
-        GUI.Label(new Rect(20, Screen.height - 70, 700, 60),
+        GUI.Label(new Rect(20, Screen.height - 84, 720, 74),
             "Move: WASD / Arrows   •   Throw: hold LEFT-MOUSE, drag BACK (slingshot), release\n" +
-            "Curve: hold A / D while aiming   •   You control the white-ringed player — pass to advance.",
+            "Curve: hold A / D while aiming   •   Jump: SPACE   •   Layout (dive): SHIFT / F\n" +
+            "You control the white-ringed player — pass to advance.",
             small);
     }
 }

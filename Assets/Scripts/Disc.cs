@@ -179,7 +179,7 @@ public class Disc : MonoBehaviour
         foreach (var pl in MatchManager.I.players)
         {
             if (pl == thrower) continue;         // you can't catch your own throw
-            float reach = pl.catchRadius;
+            float reach = pl.CatchReach;         // grows while a player is laid out
             Vector3 d = pl.transform.position - dp;
             d.y *= 0.5f;                         // jumping/extension is cheap vertically
             float dist = d.magnitude;
