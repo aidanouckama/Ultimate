@@ -61,12 +61,12 @@ public class MatchManager : MonoBehaviour
     void Start()
     {
         // resolve references from the scene if they weren't wired in the Inspector
-        if (field == null) field = FindFirstObjectByType<Field>();
-        if (disc  == null) disc  = FindFirstObjectByType<Disc>();
+        if (field == null) field = FindAnyObjectByType<Field>();
+        if (disc  == null) disc  = FindAnyObjectByType<Disc>();
 
         // gather every player that isn't already registered
         if (players.Count == 0)
-            foreach (var p in FindObjectsByType<Player>(FindObjectsSortMode.None))
+            foreach (var p in FindObjectsByType<Player>(FindObjectsInactive.Exclude))
                 Register(p);
 
         // pick the one player the human will always control (a central handler)
