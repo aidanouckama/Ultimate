@@ -1,12 +1,11 @@
 using UnityEngine;
 
-/// <summary>Minimal on-screen scoreboard, throw power meter, camera-mode tag, and
-/// controls help, drawn with IMGUI.</summary>
+/// <summary>Minimal on-screen scoreboard, throw power meter, and controls help, drawn
+/// with IMGUI.</summary>
 public class Hud : MonoBehaviour
 {
-    GUIStyle big, small, status, cornerTag;
+    GUIStyle big, small, status;
     HumanController human;
-    CameraRig rig;
 
     void InitStyles()
     {
@@ -14,10 +13,7 @@ public class Hud : MonoBehaviour
         small = new GUIStyle(GUI.skin.label) { fontSize = 14 };
         status = new GUIStyle(GUI.skin.label){ fontSize = 20, fontStyle = FontStyle.Bold,
                                                alignment = TextAnchor.UpperCenter };
-        cornerTag = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold,
-                                                   alignment = TextAnchor.UpperRight };
-        big.normal.textColor = small.normal.textColor = status.normal.textColor =
-            cornerTag.normal.textColor = Color.white;
+        big.normal.textColor = small.normal.textColor = status.normal.textColor = Color.white;
     }
 
     void OnGUI()
@@ -26,7 +22,6 @@ public class Hud : MonoBehaviour
         if (mm == null) return;
         if (big == null) InitStyles();
         if (human == null) human = FindAnyObjectByType<HumanController>();
-        if (rig == null)   rig   = FindAnyObjectByType<CameraRig>();
 
         GUI.Label(new Rect(20, 14, 600, 40),
             $"HOME {mm.scoreHome}   :   {mm.scoreAway} AWAY", big);
@@ -42,11 +37,6 @@ public class Hud : MonoBehaviour
             GUI.Label(new Rect(0, 88, Screen.width, 34), $"STALL  {mm.StallNumber}", status);
             GUI.color = prev;
         }
-
-        // camera mode tag (top-right)
-        if (rig != null)
-            GUI.Label(new Rect(Screen.width - 230, 16, 210, 24),
-                rig.mode == CameraRig.Mode.Frisbee ? "FRISBEE CAM  (V)" : "FORWARD CAM  (V)", cornerTag);
 
         // throw wind-up: power meter + type while charging, button prompt otherwise
         if (human != null)
@@ -69,12 +59,12 @@ public class Hud : MonoBehaviour
             else if (human.HoldingDisc)
             {
                 GUI.Label(new Rect(0, Screen.height - 140f, Screen.width, 24f),
-                    "LEFT = backhand · RIGHT = flick    (tap = fake · hold = throw)", status);
+                    "A / D = curve    LEFT = backhand · RIGHT = flick    (tap = fake · hold = throw)", status);
             }
         }
 
         GUI.Label(new Rect(20, Screen.height - 90, 760, 80),
-            "Move: WASD / Arrows   •   Aim: mouse   •   V: toggle frisbee / forward cam\n" +
+            "Move: WASD / Arrows   •   Aim: mouse — left/right turns, up/down sets loft\n" +
             "Throw: LEFT = backhand / RIGHT = flick — tap = fake, hold = throw (power)   •   A / D curve\n" +
             "Jump: SPACE   •   Layout (dive): SHIFT / F   •   you control the white-ringed player",
             small);

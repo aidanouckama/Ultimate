@@ -82,6 +82,8 @@ MonoBehaviour:
   catchRadius: 2.2
   HandPoint: {fileID: 5789824574768199023}
   aiTarget: {x: 0, y: 0, z: 0}
+  Winding: 0
+  WindPivot: {x: 0, y: 0, z: 0}
   animator: {fileID: 330836433652472265}
   jumpHeight: 1.6
   jumpDuration: 0.65
@@ -105,9 +107,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AIController
   laneBlockRadius: 2.8
   minReceiverOpenness: 2.6
+  frontBlockRadius: 3.2
+  frontBlockAngle: 45
   throwLoft: 0.28
   minThrowSpeed: 5
   maxThrowSpeed: 18
+  cutSamples: 12
+  laneWeight: 0.4
+  progressWeight: 0.1
+  cutSpacing: 6
+  spacingWeight: 0.3
   markOffset: 1.4
   forceShade: 1.6
   fakeBite: 1.8

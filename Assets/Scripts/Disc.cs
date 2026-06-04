@@ -18,6 +18,10 @@ public class Disc : MonoBehaviour
     public float drag = 0.012f;
     [Tooltip("Glide lift from forward speed. Tune so a fast disc sails, then sinks.")]
     public float lift = 0.030f;
+    [Tooltip("Lift is capped at this fraction of gravity, so a fast disc sails nearly level " +
+             "but never CLIMBS — throwing harder lasers it farther, not higher. Below 1 keeps " +
+             "a slight net descent so it always comes down.")]
+    [Range(0f, 1f)] public float maxLiftRatio = 0.85f;
     [Tooltip("Curve strength. The disc carves perpendicular to its travel, so this " +
              "bends the whole flight path (a banana), not just the launch direction.")]
     public float curl = 1.0f;
@@ -49,6 +53,8 @@ public class Disc : MonoBehaviour
     float graceTimer;       // brief window after release: nobody can catch
     float spin;             // signed spin imparted at throw, decays in flight
     float liftScale = 1f;   // per-throw glide multiplier — low for a hammer (arcs & drops)
+    Vector3 curveAccel;     // fixed sideways "gravity" for an arc throw — bows the path out
+                            // and back so a curved throw still lands on the aim line
 
     void Awake()
     {
@@ -68,15 +74,18 @@ public class Disc : MonoBehaviour
     /// so the predicted line matches real flight exactly. <paramref name="liftMul"/>
     /// scales the glide for the throw type (≈1 for flat throws, low for a hammer that
     /// arcs over and drops instead of sailing).</summary>
-    public Vector3 Aero(Vector3 v, float spinNow, float liftMul = 1f)
+    public Vector3 Aero(Vector3 v, float spinNow, float liftMul = 1f, Vector3 curveAcc = default)
     {
         Vector3 a = Vector3.down * gravity;
+        a += curveAcc;                                    // arc throw: sideways "gravity" (fixed axis)
         float speed = v.magnitude;
         if (speed > 0.001f)
         {
             a += -drag * speed * v;                       // drag opposes motion
             Vector3 horiz = new Vector3(v.x, 0f, v.z);
-            a += Vector3.up * lift * liftMul * horiz.magnitude * speed;   // glide
+            // glide — but capped below gravity so a fast disc sails flat and never climbs
+            float liftAcc = lift * liftMul * horiz.magnitude * speed;
+            a += Vector3.up * Mathf.Min(liftAcc, gravity * maxLiftRatio);
             // spin curls the disc sideways (perpendicular to travel, in the plane)
             Vector3 side = Vector3.Cross(Vector3.up, horiz.normalized);
             a += side * curl * spinNow * horiz.magnitude;
@@ -110,7 +119,7 @@ public class Disc : MonoBehaviour
     }
 
     public void Throw(Vector3 velocity, Team team, float spinAmount, Player receiver = null,
-                      float liftMul = 1f)
+                      float liftMul = 1f, Vector3 curve = default)
     {
         thrower = Holder;           // remember who let it go, before clearing
         Holder = null;
@@ -118,6 +127,7 @@ public class Disc : MonoBehaviour
         throwerTeam = team;
         spin = spinAmount;
         liftScale = liftMul;
+        curveAccel = curve;
         state = State.Flying;
         graceTimer = 0.18f;
         rb.isKinematic = false;
@@ -133,7 +143,7 @@ public class Disc : MonoBehaviour
         const float dt = 0.04f;
         for (int i = 0; i < 250; i++)       // up to 10s of flight
         {
-            vel += Aero(vel, s, liftScale) * dt;
+            vel += Aero(vel, s, liftScale, curveAccel) * dt;
             p += vel * dt;
             s = Mathf.MoveTowards(s, 0f, dt * spinDecay);
             if (p.y <= restHeight) break;
@@ -149,6 +159,7 @@ public class Disc : MonoBehaviour
         Receiver = null;
         state = State.Loose;
         spin = 0f;
+        curveAccel = Vector3.zero;
         rb.isKinematic = true;
         pos.y = restHeight;
         transform.position = pos;
@@ -162,7 +173,7 @@ public class Disc : MonoBehaviour
         if (graceTimer > 0f) graceTimer -= Time.fixedDeltaTime;
         spin = Mathf.MoveTowards(spin, 0f, Time.fixedDeltaTime * spinDecay);
 
-        rb.AddForce(Aero(rb.linearVelocity, spin, liftScale), ForceMode.Acceleration);
+        rb.AddForce(Aero(rb.linearVelocity, spin, liftScale, curveAccel), ForceMode.Acceleration);
 
         // spin the mesh for visual flair
         transform.Rotate(Vector3.up, 720f * Time.fixedDeltaTime, Space.World);

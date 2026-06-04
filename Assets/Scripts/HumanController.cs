@@ -20,6 +20,7 @@ public class HumanController : MonoBehaviour
 {
     [Header("References")]
     public Camera cam;
+    CameraRig rig;        // read for aim elevation (mouse pitch → throw loft)
 
     [Header("Throw tuning")]
     [Tooltip("Hold shorter than this and release = a pump FAKE; hold longer = a real throw.")]
@@ -28,8 +29,13 @@ public class HumanController : MonoBehaviour
     public float chargeTime = 0.9f;
     public float minThrowSpeed = 10f;
     public float maxThrowSpeed = 27f;
-    public float loftBase = 2.5f;
-    public float loftScale = 4.0f;
+    [Tooltip("Baseline loft even when aiming flat. Keep low so a level throw lasers; raise " +
+             "for more arc on a 'flat' aim.")]
+    public float loftBase = 1.0f;
+    [Tooltip("Vertical launch speed added per unit of aim elevation (independent of power, so " +
+             "throw height is set by where you look, not how hard you throw). Up = skyball; " +
+             "flat/down = zinger.")]
+    public float pitchLoft = 6.5f;
 
     [Header("Step-out")]
     [Tooltip("How far the thrower pivots out to the side while winding up (metres).")]
@@ -45,6 +51,14 @@ public class HumanController : MonoBehaviour
     [Tooltip("Fraction of the predicted flight drawn as the curve hint. Long enough to " +
              "show the bend, short enough that the landing spot stays hidden.")]
     [Range(0.2f, 1f)] public float hintFraction = 0.6f;
+    [Tooltip("Sideways launch speed (m/s) per unit of curve. The disc is thrown out to the " +
+             "side and a matching inward pull brings it back, so the path bows out and lands " +
+             "on the same straight-ahead spot — an 'around' throw, not a hook off target. " +
+             "Bigger = a wider arc.")]
+    public float curveArc = 6f;
+    [Tooltip("Representative power used to draw the curve-planning line before you click. " +
+             "Just sizes the preview — the real throw uses your held power.")]
+    [Range(0.1f, 1f)] public float previewPower = 0.5f;
 
     const int HintMaxSteps = 200;
     readonly Vector3[] hintBuf = new Vector3[HintMaxSteps];   // reused so the hint never allocates
@@ -93,6 +107,7 @@ public class HumanController : MonoBehaviour
     void Awake()
     {
         if (cam == null) cam = Camera.main;
+        rig = FindAnyObjectByType<CameraRig>();
         BuildAimLine();
         BuildShadowBlob();
     }
@@ -109,7 +124,7 @@ public class HumanController : MonoBehaviour
         // Play stopped (goal celebration / reset): no moving or throwing.
         if (!mm.PointLive)
         {
-            aimingThrow = false; charging = false; stepAmt = 0f; holdTime = 0f; HideAim();
+            aimingThrow = false; charging = false; stepAmt = 0f; holdTime = 0f; curveSpin = 0f; HideAim();
             if (mm.Controlled != null) mm.Controlled.Winding = false;
             return;
         }
@@ -152,7 +167,7 @@ public class HumanController : MonoBehaviour
     {
         HideAim();
         aimingThrow = false;
-        charging = false; stepAmt = 0f; holdTime = 0f;   // any interrupted wind-up ends cleanly
+        charging = false; stepAmt = 0f; holdTime = 0f; curveSpin = 0f;   // interrupted wind-up ends cleanly
         me.Winding = false;
 
         if (me.Busy) return;   // mid-layout: no steering until they're back up
@@ -205,6 +220,14 @@ public class HumanController : MonoBehaviour
 
         if (!charging)
         {
+            // Plan the curve BEFORE committing: A / D dials the bend and a short preview line
+            // shows it, so you can set a big curve without holding (and bombing) the throw.
+            // The dialed curve carries into the wind-up; power is then purely the hold time.
+            curveSpin = Mathf.Clamp(
+                curveSpin + ReadCurveAxis() * curveChargeRate * Time.deltaTime,
+                -maxCurveSpin, maxCurveSpin);
+            DrawCurvePreview(mm);
+
             // Start a wind-up: LEFT = backhand (step out left), RIGHT = flick (step right).
             if (mouse.leftButton.wasPressedThisFrame)       StartWindup(me, ThrowKind.Backhand);
             else if (mouse.rightButton.wasPressedThisFrame) StartWindup(me, ThrowKind.Flick);
@@ -226,7 +249,11 @@ public class HumanController : MonoBehaviour
             stepAmt = Mathf.MoveTowards(stepAmt, 1f, Time.deltaTime / Mathf.Max(stepTime, 0.01f));
             me.transform.position = stepBase + stepSide * stepDistance * stepAmt;
 
-            if (Committed) DrawCurveHint(mm, ThrowVelocity(charge), EffectiveSpin(), Spec(kind).liftMul);
+            if (Committed)
+            {
+                Vector3 v0 = ThrowVelocity(charge, out Vector3 curveAccel);
+                DrawCurveHint(mm, v0, curveAccel, Spec(kind).liftMul);
+            }
             else HideAim();   // still inside the fake window — don't reveal a throw line yet
         }
         else
@@ -241,8 +268,10 @@ public class HumanController : MonoBehaviour
             }
             else if (charge > 0.05f)
             {
-                // held = real THROW, released from the stepped-out position
-                mm.disc.Throw(ThrowVelocity(charge), me.team, EffectiveSpin(), null, Spec(kind).liftMul);
+                // held = real THROW, released from the stepped-out position. The curve is the
+                // arc (curveAccel), so no perpendicular spin — the disc lands on the aim line.
+                Vector3 v0 = ThrowVelocity(charge, out Vector3 curveAccel);
+                mm.disc.Throw(v0, me.team, 0f, null, Spec(kind).liftMul, curveAccel);
                 me.PlayThrow();
             }
             me.transform.position = stepBase;   // recover the pivot
@@ -256,7 +285,9 @@ public class HumanController : MonoBehaviour
     /// button is held past <see cref="fakeTime"/> this is indistinguishable from a fake.</summary>
     void StartWindup(Player me, ThrowKind k)
     {
-        charging = true; kind = k; charge = 0f; holdTime = 0f; curveSpin = 0f; stepAmt = 0f;
+        // NOTE: curveSpin is intentionally NOT reset — it carries the curve you planned
+        // (dialed with A/D) before clicking, so power and curve stay independent.
+        charging = true; kind = k; charge = 0f; holdTime = 0f; stepAmt = 0f;
         stepBase = me.transform.position;
         Vector3 r = me.transform.right; r.y = 0f; r.Normalize();
         stepSide = (k == ThrowKind.Backhand) ? -r : r;
@@ -266,13 +297,56 @@ public class HumanController : MonoBehaviour
     /// <summary>Launch velocity for a given power level (0..1 from the wind-up): aimed
     /// where the camera looks, with speed and loft scaling off the power and the throw
     /// type's profile (a flick is flatter and faster than a backhand).</summary>
-    Vector3 ThrowVelocity(float power01)
+    /// <summary>Build the launch velocity and the matching arc acceleration for a curved
+    /// throw. The disc leaves heading partly sideways (so it breaks out of the hand right
+    /// away), and <paramref name="curveAccel"/> is a fixed inward pull tuned to cancel that
+    /// sideways motion exactly at landing — so the curve bows the PATH out and back but the
+    /// disc still lands on the straight-ahead aim line, not off to the side.</summary>
+    Vector3 ThrowVelocity(float power01, out Vector3 curveAccel)
+        => BuildThrow(power01, EffectiveSpin(), Spec(kind), out curveAccel);
+
+    /// <summary>Core launch builder: a straight throw (speed + loft from power and the throw
+    /// type) plus a sideways launch from <paramref name="spin"/> and a matching inward pull
+    /// (a = 2*vSide/T, T = straight flight time) so the lateral parabola returns to zero at
+    /// landing. The path bows vSide*T/4 to the side, then back to the aim line.</summary>
+    Vector3 BuildThrow(float power01, float spin, ThrowSpec t, out Vector3 curveAccel)
     {
-        var t = Spec(kind);
-        Vector3 dir = Flat(cam.transform.forward);
+        Vector3 dir  = Flat(cam.transform.forward);
+        Vector3 side = Vector3.Cross(Vector3.up, dir);   // player's right (+ = right)
+
         float speed = Mathf.Lerp(minThrowSpeed, maxThrowSpeed, power01) * t.speedMul;
-        float loft  = (loftBase + loftScale * power01) * t.loftMul;
-        return dir * speed + Vector3.up * loft;
+
+        // Loft comes from where you're looking: the aim elevation (mouse pitch) sets the
+        // vertical launch, so up = skyball and flat/down = a zinger. Crucially it does NOT
+        // scale with speed — power controls range only, so holding longer lasers it farther
+        // at the SAME height instead of arcing it up. A small base keeps a level throw gliding.
+        float pitch = rig != null ? rig.AimPitch : 0f;
+        float loft  = (loftBase + pitchLoft * Mathf.Tan(pitch * Mathf.Deg2Rad)) * t.loftMul;
+
+        Vector3 straight = dir * speed + Vector3.up * loft;
+        float vSide = spin * curveArc;
+        float flight = Mathf.Max(FlightTime(straight), 0.2f);
+        curveAccel = side * (-2f * vSide / flight);
+
+        return straight + side * vSide;
+    }
+
+    /// <summary>Simulate a straight throw (no spin, no arc) with the disc's own model to get
+    /// its flight time — used to tune the arc pull so a curved throw lands on the aim line.</summary>
+    float FlightTime(Vector3 v0)
+    {
+        var disc = MatchManager.I.disc;
+        Vector3 p = disc.transform.position, v = v0;
+        const float dt = 0.04f;
+        float t = 0f;
+        for (int i = 0; i < HintMaxSteps; i++)
+        {
+            v += disc.Aero(v, 0f) * dt;
+            p += v * dt;
+            t += dt;
+            if (p.y <= disc.restHeight) break;
+        }
+        return t;
     }
 
     // --- curve hint -------------------------------------------------------
@@ -283,21 +357,19 @@ public class HumanController : MonoBehaviour
     /// the curve as it develops, but stopping before the landing so it stays a hint, not
     /// a guide to the exact spot. (A short stub looks straight because the curl is a
     /// sideways acceleration: deflection grows with time², so the bend shows up late.)</summary>
-    void DrawCurveHint(MatchManager mm, Vector3 v0, float spin, float liftMul)
+    void DrawCurveHint(MatchManager mm, Vector3 v0, Vector3 curveAccel, float liftMul)
     {
         const float dt = 0.04f;
         float ground = mm.disc.restHeight;
 
         Vector3 p = mm.disc.transform.position;
         Vector3 v = v0;
-        float s = spin;
         int n = 0;
         for (; n < HintMaxSteps; n++)
         {
             hintBuf[n] = p;
-            v += mm.disc.Aero(v, s, liftMul) * dt;   // semi-implicit Euler, matching the disc's flight
+            v += mm.disc.Aero(v, 0f, liftMul, curveAccel) * dt;   // matches the disc's flight (arc, no spin)
             p += v * dt;
-            s = Mathf.MoveTowards(s, 0f, dt * mm.disc.spinDecay);
             if (p.y <= ground) { n++; break; }
         }
 
@@ -305,6 +377,17 @@ public class HumanController : MonoBehaviour
         aim.enabled = true;
         aim.positionCount = count;
         for (int i = 0; i < count; i++) aim.SetPosition(i, hintBuf[i]);
+    }
+
+    /// <summary>A short line showing the curve you've planned while holding the disc, before
+    /// you click. Drawn at a representative power with only the dialed curve (no throw-type
+    /// lean — you haven't picked backhand/flick yet), so it reads as "this is how much I'll
+    /// bend it." The live wind-up hint then takes over once you commit.</summary>
+    void DrawCurvePreview(MatchManager mm)
+    {
+        var neutral = Spec(ThrowKind.Backhand);   // 1x speed/loft; its lean is unused (spin passed explicitly)
+        Vector3 v0 = BuildThrow(previewPower, curveSpin, neutral, out Vector3 curveAccel);
+        DrawCurveHint(mm, v0, curveAccel, neutral.liftMul);
     }
 
     void HideAim()

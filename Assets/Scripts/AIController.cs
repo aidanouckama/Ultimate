@@ -15,6 +15,12 @@ public class AIController : MonoBehaviour
     public float laneBlockRadius = 2.8f;
     [Tooltip("The receiver must have at least this much separation from defenders.")]
     public float minReceiverOpenness = 2.6f;
+    [Tooltip("A defender this close to the holder, inside the throw-direction cone, blocks " +
+             "that throw (the mark right in your face). Throws to the open side are still on; " +
+             "if every option is walled off in front, the holder just holds the disc.")]
+    public float frontBlockRadius = 3.2f;
+    [Tooltip("Half-angle (degrees) of the 'directly in front' cone a near defender blocks.")]
+    public float frontBlockAngle = 45f;
 
     Player me;
     float decisionTimer;
@@ -55,6 +61,10 @@ public class AIController : MonoBehaviour
         Vector3 from = mm.disc.transform.position;
         Vector3 flat = lead - from; flat.y = 0f;
         if (flat.magnitude < 1f) return;
+
+        // turn to face the throw — open-side and swing passes go out to the side, not
+        // straight downfield, so pivot toward the lane before releasing.
+        me.FaceDir(flat.normalized);
 
         // Solve the launch speed against the real flight model so the disc lands on
         // the target instead of being heaved — the disc's glide carries it far past
@@ -135,6 +145,10 @@ public class AIController : MonoBehaviour
                 : mate.transform.position + new Vector3(0f, 0f, dir) * 4f;
             predicted = mm.field.ClampInBounds(predicted);
 
+            // GATE 0: a defender standing right in front, in this throw direction, walls
+            // it off (you can't throw through your own mark). Side lanes stay open.
+            if (ThrowDirBlocked(mm, from, predicted)) continue;
+
             // GATE 1: a defender sitting in the passing lane would pick it off
             float laneClear = LaneClearance(mm, from, predicted, me.team);
             if (laneClear < laneBlockRadius) continue;
@@ -176,6 +190,26 @@ public class AIController : MonoBehaviour
         return nearest;
     }
 
+    /// <summary>Is a defender standing right in front of the holder, along this throw
+    /// direction? Near (within <see cref="frontBlockRadius"/>) AND inside the forward cone
+    /// (<see cref="frontBlockAngle"/>). That's the mark in your face — you throw around it,
+    /// to the sides, not through it. Off-axis (side) throws aren't blocked by this.</summary>
+    bool ThrowDirBlocked(MatchManager mm, Vector3 from, Vector3 toSpot)
+    {
+        Vector3 dir = toSpot - from; dir.y = 0f;
+        if (dir.sqrMagnitude < 1e-4f) return false;
+        dir.Normalize();
+        float cosLim = Mathf.Cos(frontBlockAngle * Mathf.Deg2Rad);
+        foreach (var d in mm.TeamList(mm.Other(me.team)))
+        {
+            Vector3 to = d.transform.position - from; to.y = 0f;
+            float dist = to.magnitude;
+            if (dist > frontBlockRadius || dist < 1e-3f) continue;
+            if (Vector3.Dot(to / dist, dir) >= cosLim) return true;   // near + in front
+        }
+        return false;
+    }
+
     static float DistPointToSegment(Vector3 p, Vector3 a, Vector3 b)
     {
         Vector3 ab = b - a;
@@ -186,6 +220,19 @@ public class AIController : MonoBehaviour
     }
 
     // --- offense without the disc ----------------------------------------
+
+    [Header("Cutting")]
+    [Tooltip("How many candidate cut spots to weigh each decision. More = smarter, costs a little.")]
+    public int cutSamples = 12;
+    [Tooltip("Weight on a clear throwing lane from the disc to the cut — a cut a throw can " +
+             "actually reach beats one that's open but walled off.")]
+    public float laneWeight = 0.4f;
+    [Tooltip("Weight on downfield progress (yards gained toward the end zone).")]
+    public float progressWeight = 0.1f;
+    [Tooltip("Cutters want this much room from the nearest teammate; tighter bunches are penalized.")]
+    public float cutSpacing = 6f;
+    [Tooltip("Weight on staying spread out from teammates.")]
+    public float spacingWeight = 0.3f;
 
     void HandleCutter(MatchManager mm)
     {
@@ -198,24 +245,52 @@ public class AIController : MonoBehaviour
         me.MoveToward(me.aiTarget);
     }
 
+    /// <summary>Pick where to cut. Scores sampled spots on four things a real cutter reads:
+    /// being OPEN (away from defenders), being REACHABLE (a clear lane from the disc, so the
+    /// throw can actually get there), making downfield PROGRESS, and keeping SPACING from
+    /// teammates so cutters don't pile into the same lane. Roughly a quarter of the samples
+    /// are unders/comebacks toward the disc, so the offense shows both deep and reset looks.</summary>
     Vector3 PickCut(MatchManager mm)
     {
         float dir = mm.field.AttackDir(me.team);
         Vector3 p = me.transform.position;
+        Vector3 disc = mm.disc.transform.position;
 
-        // bias downfield, with a lateral juke, sampling a few spots for openness
-        Vector3 best = p; float bestOpen = -1f;
-        for (int i = 0; i < 6; i++)
+        Vector3 best = p; float bestScore = float.NegativeInfinity;
+        for (int i = 0; i < cutSamples; i++)
         {
-            Vector3 cand = p + new Vector3(
-                Random.Range(-14f, 14f),
-                0f,
-                dir * Random.Range(4f, 16f));
+            // mix of downfield strikes and the occasional under/comeback toward the disc
+            bool under = (i & 3) == 3;
+            float fwd = under ? dir * Random.Range(-3f, 4f) : dir * Random.Range(4f, 18f);
+            Vector3 cand = p + new Vector3(Random.Range(-16f, 16f), 0f, fwd);
             cand = mm.field.ClampInBounds(cand);
-            float open = Openness(mm, cand, me.team);
-            if (open > bestOpen) { bestOpen = open; best = cand; }
+
+            float open     = Openness(mm, cand, me.team);                 // room from defenders
+            float lane     = LaneClearance(mm, disc, cand, me.team);      // throw can reach it
+            float progress = (cand.z - p.z) * dir;                        // toward the end zone
+            float spacing  = Mathf.Min(TeammateSpacing(mm, cand), cutSpacing);
+
+            float score = open
+                        + lane * laneWeight
+                        + Mathf.Clamp(progress, -6f, 18f) * progressWeight
+                        + spacing * spacingWeight;
+            if (score > bestScore) { bestScore = score; best = cand; }
         }
         return best;
+    }
+
+    /// <summary>Distance from a spot to the nearest teammate (excluding me) — used so cuts
+    /// spread out instead of bunching into the same lane.</summary>
+    float TeammateSpacing(MatchManager mm, Vector3 spot)
+    {
+        float nearest = float.MaxValue;
+        foreach (var mate in mm.TeamList(me.team))
+        {
+            if (mate == me) continue;
+            float d = (mate.transform.position - spot).magnitude;
+            if (d < nearest) nearest = d;
+        }
+        return nearest;
     }
 
     // --- disc in flight ---------------------------------------------------

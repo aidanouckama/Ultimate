@@ -2,21 +2,15 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
-/// Third-person camera with two modes, toggled with V:
-///  - Forward: auto chase cam, eases around behind the controlled player's facing.
-///    Hands-off — good for running. (Player faces movement on offence, the disc on
-///    defence, so you "look where you're going" / "watch the disc" for free.)
-///  - Frisbee: aim cam — the mouse turns the view (yaw) so you can line up a throw,
-///    orbiting behind the player at the aimed heading. The throw goes where it looks.
-///
-/// Either way the camera sits behind + above the player and looks ahead. The chase
-/// direction is smoothed so it arcs around instead of snapping. Falls back to the disc
-/// when nobody is controlled (between points).
+/// Third-person mouse-look camera. The mouse turns the view — X = heading (yaw),
+/// Y = elevation (pitch) — and the camera orbits behind + above the controlled player,
+/// looking ahead along that aim. You move with WASD relative to the view, and throws go
+/// where the camera looks (yaw = direction, pitch = loft). Pulls back while holding the
+/// disc so the handler can read the field, and falls back to the disc when nobody is
+/// controlled (between points). Motion is smoothed so it eases rather than snaps.
 /// </summary>
 public class CameraRig : MonoBehaviour
 {
-    public enum Mode { Forward, Frisbee }
-
     [Tooltip("How far behind the player the camera sits.")]
     public float distance = 7f;
     [Tooltip("How high above the player the camera sits.")]
@@ -28,7 +22,7 @@ public class CameraRig : MonoBehaviour
     [Tooltip("And rise to this height while holding the disc.")]
     public float handlerHeight = 6.5f;
 
-    [Tooltip("Look this far ahead of the player, along the chase direction.")]
+    [Tooltip("Look this far ahead of the player, along the aim direction.")]
     public float lookAhead = 6f;
     [Tooltip("Height of the look-at point above the player's feet (roughly head height).")]
     public float lookHeight = 1.6f;
@@ -37,23 +31,31 @@ public class CameraRig : MonoBehaviour
     public float moveLerp = 9f;
     [Tooltip("Aim smoothing for where the camera points.")]
     public float aimLerp = 11f;
-    [Tooltip("Forward mode: how fast the camera swings behind the player on a turn. " +
-             "Lower = lazier; higher = snaps behind them.")]
-    public float turnLerp = 5f;
-    [Tooltip("Frisbee mode: mouse turn speed (degrees per pixel of mouse movement).")]
+    [Tooltip("Mouse turn speed (degrees per pixel of horizontal mouse movement).")]
     public float mouseSensitivity = 0.15f;
+    [Tooltip("Mouse up/down tilt speed (degrees per pixel). The aim pitch this sets becomes " +
+             "the throw's loft — look up to skyball, flat/down to zing it.")]
+    public float pitchSensitivity = 0.12f;
+    [Tooltip("Lowest aim elevation (degrees). Slightly negative lets you drive a flat zinger.")]
+    public float minAimPitch = -8f;
+    [Tooltip("Highest aim elevation (degrees) — a steep skyball / hammer arc.")]
+    public float maxAimPitch = 55f;
 
-    public Mode mode = Mode.Forward;
-
-    Vector3 rigForward = Vector3.forward;   // smoothed 'behind' direction (the way we chase)
-    float yaw;                               // frisbee-mode aim heading, in degrees
+    Vector3 rigForward = Vector3.forward;   // 'behind' direction (the way we chase), from yaw
+    float yaw;                               // aim heading, in degrees
+    float aimPitch = 0f;                     // aim elevation, degrees (mouse Y); 0 = level laser
     Transform look;                          // smoothed look-at point
     bool snapped;                            // first frame jumps straight to the pose
+
+    /// <summary>Current aim elevation in degrees (set by mouse Y). The thrower reads this
+    /// for loft: up = skyball, flat/down = a zinger.</summary>
+    public float AimPitch => aimPitch;
 
     void Start()
     {
         look = new GameObject("CamLook").transform;
         yaw = Mathf.Atan2(rigForward.x, rigForward.z) * Mathf.Rad2Deg;
+        Cursor.lockState = CursorLockMode.Locked;   // smooth mouse-look (Esc frees it in-editor)
     }
 
     void LateUpdate()
@@ -61,30 +63,19 @@ public class CameraRig : MonoBehaviour
         var mm = MatchManager.I;
         if (mm == null) return;
 
-        // V toggles forward (auto chase) <-> frisbee (mouse aim).
-        var kb = Keyboard.current;
-        if (kb != null && kb.vKey.wasPressedThisFrame) ToggleMode();
-
         Transform target = mm.Controlled != null ? mm.Controlled.transform
                                                   : mm.disc.transform;
 
-        if (mode == Mode.Frisbee)
+        // Mouse turns the aim: X = heading (yaw), Y = elevation (pitch → throw loft).
+        var mouse = Mouse.current;
+        if (mouse != null)
         {
-            // Mouse turns the aim (yaw only — loft is automatic from throw power).
-            var mouse = Mouse.current;
-            if (mouse != null) yaw += mouse.delta.ReadValue().x * mouseSensitivity;
-            rigForward = new Vector3(Mathf.Sin(yaw * Mathf.Deg2Rad), 0f,
-                                     Mathf.Cos(yaw * Mathf.Deg2Rad));
+            Vector2 d = mouse.delta.ReadValue();
+            yaw += d.x * mouseSensitivity;
+            aimPitch = Mathf.Clamp(aimPitch + d.y * pitchSensitivity, minAimPitch, maxAimPitch);
         }
-        else if (mm.Controlled != null)
-        {
-            // Ease the chase direction toward the player's facing so the camera arcs
-            // around behind them rather than whipping.
-            Vector3 f = mm.Controlled.transform.forward; f.y = 0f;
-            if (f.sqrMagnitude > 1e-4f)
-                rigForward = Vector3.Slerp(rigForward, f.normalized,
-                                           turnLerp * Time.deltaTime).normalized;
-        }
+        rigForward = new Vector3(Mathf.Sin(yaw * Mathf.Deg2Rad), 0f,
+                                 Mathf.Cos(yaw * Mathf.Deg2Rad));
 
         // Pull back + up while holding the disc so the handler can read the field. The
         // position lerp below eases the zoom, so it's a smooth dolly, not a snap.
@@ -98,7 +89,8 @@ public class CameraRig : MonoBehaviour
             ? mm.Controlled.WindPivot
             : target.position;
         Vector3 desired   = basePos + Vector3.up * h - rigForward * dist;
-        Vector3 lookPoint = basePos + Vector3.up * lookHeight + rigForward * lookAhead;
+        Vector3 lookPoint = basePos + Vector3.up * lookHeight + rigForward * lookAhead
+                          + Vector3.up * Mathf.Tan(aimPitch * Mathf.Deg2Rad) * lookAhead;
 
         if (!snapped)   // avoid a swoop in from wherever the camera was placed
         {
@@ -115,20 +107,5 @@ public class CameraRig : MonoBehaviour
             transform.rotation,
             Quaternion.LookRotation(look.position - transform.position),
             aimLerp * Time.deltaTime);
-    }
-
-    void ToggleMode()
-    {
-        if (mode == Mode.Forward)
-        {
-            mode = Mode.Frisbee;
-            yaw = Mathf.Atan2(rigForward.x, rigForward.z) * Mathf.Rad2Deg;  // start where we are
-            Cursor.lockState = CursorLockMode.Locked;   // smooth mouse-look (Esc frees it in-editor)
-        }
-        else
-        {
-            mode = Mode.Forward;
-            Cursor.lockState = CursorLockMode.None;
-        }
     }
 }
