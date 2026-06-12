@@ -86,12 +86,19 @@ MonoBehaviour:
   WindPivot: {x: 0, y: 0, z: 0}
   animator: {fileID: 330836433652472265}
   jumpHeight: 1.6
-  jumpDuration: 0.65
+  jumpRise: 0.38
+  jumpFall: 0.28
   jumpReachBonus: 0.7
+  jumpMomentum: 0.9
   fakeHold: 0.5
   diveSpeed: 12
+  diveLift: 2.2
+  diveGravity: 16
+  layoutHeight: 0.45
   diveExtend: 0.5
   diveRecover: 0.7
+  diveFriction: 16
+  diveMomentum: 0.3
   diveCatchRadius: 4.2
 --- !u!114 &7386078616448608469
 MonoBehaviour:

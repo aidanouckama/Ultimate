@@ -47,7 +47,7 @@ public class HumanController : MonoBehaviour
     [Tooltip("Hold A / D (or ← / →) while aiming to bend the throw. Max signed spin.")]
     public float maxCurveSpin = 1.4f;
     [Tooltip("How fast the curve winds up to full while the curve key is held.")]
-    public float curveChargeRate = 2.2f;
+    public float curveChargeRate = 5f;
     [Tooltip("Fraction of the predicted flight drawn as the curve hint. Long enough to " +
              "show the bend, short enough that the landing spot stays hidden.")]
     [Range(0.2f, 1f)] public float hintFraction = 0.6f;

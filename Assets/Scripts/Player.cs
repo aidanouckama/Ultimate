@@ -27,23 +27,41 @@ public class Player : MonoBehaviour
     [Header("Jump (vertical catch — high disc)")]
     [Tooltip("Peak height of the hop. The raised body lifts the catch point so you can " +
              "sky a disc above a defender.")]
-    public float jumpHeight = 1.6f;
-    [Tooltip("Time from takeoff to landing.")]
-    public float jumpDuration = 0.65f;
+    public float jumpHeight = 1.7f;
+    [Tooltip("Time to reach the peak (the rise). Launch is instant, then gravity takes over.")]
+    public float jumpRise = 0.38f;
+    [Tooltip("Time to fall back down. Shorter than the rise — asymmetric gravity (slower up, " +
+             "faster down) is the weighty, snappy arc players expect.")]
+    public float jumpFall = 0.28f;
     [Tooltip("A little extra reach while airborne, on top of the higher catch point.")]
     public float jumpReachBonus = 0.7f;
+    [Tooltip("Fraction of your running speed carried into a jump, so you can sky a disc on " +
+             "the move instead of rooting to the spot.")]
+    [Range(0f, 1f)] public float jumpMomentum = 0.9f;
 
     [Header("Fake (pump fake)")]
     [Tooltip("How long a pump fake keeps the marker biting toward the fake side.")]
     public float fakeHold = 0.5f;
 
     [Header("Layout (diving catch — low / wide disc)")]
-    [Tooltip("Horizontal lunge speed during a layout dive.")]
-    public float diveSpeed = 12f;
+    [Tooltip("Forward lunge speed of a layout dive.")]
+    public float diveSpeed = 11f;
+    [Tooltip("Upward pop at launch so the body arcs out and lays flat near the turf, instead " +
+             "of sliding along upright.")]
+    public float diveLift = 2.2f;
+    [Tooltip("Gravity pulling the dive back down onto the ground.")]
+    public float diveGravity = 16f;
+    [Tooltip("How low the body drops while fully laid out (pivot height along the ground).")]
+    public float layoutHeight = 0.45f;
     [Tooltip("How long the full-extension reach lasts (the dive itself).")]
     public float diveExtend = 0.5f;
-    [Tooltip("Lockout after landing while the player gets back up (can't move or dive).")]
+    [Tooltip("Lockout after landing while the player slides out and gets back up.")]
     public float diveRecover = 0.7f;
+    [Tooltip("How fast the lunge/slide bleeds off (friction). Acts through the whole dive so " +
+             "it's an explosive launch that decelerates, landing ~4-5 m out rather than flying.")]
+    public float diveFriction = 16f;
+    [Tooltip("Fraction of running speed added into the dive launch (carry your momentum).")]
+    [Range(0f, 1f)] public float diveMomentum = 0.3f;
     [Tooltip("Catch radius while laid out — the extra reach is the whole point of a layout.")]
     public float diveCatchRadius = 4.2f;
 
@@ -52,11 +70,14 @@ public class Player : MonoBehaviour
     LineRenderer controlRing;   // white ring on the ground marking the human's player
     Vector3 lastAnimPos;        // previous position, to derive velocity for the animator
     bool lastAnimPosInit;
+    Vector3 groundVelocity;     // last frame's running velocity (flat), carried into jumps / dives
     float extendTimer;          // >0: laid out, lunging with extended reach
-    float recoverTimer;         // >0: down on the ground, getting back up (locked out)
+    float recoverTimer;         // >0: down on the ground, sliding out / getting back up (locked)
     Vector3 diveDir;            // the committed dive line
-    float jumpTimer;            // >0: airborne on a vertical jump
-    float jumpBaseY;            // ground height to return to on landing
+    bool airborne;              // mid-jump (vertical hop)
+    float vertVel;              // vertical velocity for the jump / dive arc
+    Vector3 airVel;             // horizontal velocity carried through a jump or dive
+    float groundY;              // standing ground height to land back on
     Vector3 fakeDir;           // direction of the last pump fake (world, flat)
     float fakeTimer;           // >0: a fake is still selling, marker biting
 
@@ -66,14 +87,14 @@ public class Player : MonoBehaviour
 
     /// <summary>True while jumping, diving, or getting back up — controllers stop
     /// steering so the move plays out without input fighting it.</summary>
-    public bool Busy => extendTimer > 0f || recoverTimer > 0f || jumpTimer > 0f;
+    public bool Busy => extendTimer > 0f || recoverTimer > 0f || airborne;
 
     /// <summary>Catch reach right now. A layout extends it a lot (wide horizontal grab);
     /// a jump adds a little (the real gain there is the raised catch point). The disc
     /// reads this when testing catches.</summary>
     public float CatchReach =>
         extendTimer > 0f ? diveCatchRadius :
-        jumpTimer   > 0f ? catchRadius + jumpReachBonus : catchRadius;
+        airborne        ? catchRadius + jumpReachBonus : catchRadius;
 
     void Awake()
     {
@@ -162,7 +183,6 @@ public class Player : MonoBehaviour
     /// is steering, since both just move the transform.</summary>
     void LateUpdate()
     {
-        if (animator == null) return;
         if (!lastAnimPosInit) { lastAnimPos = transform.position; lastAnimPosInit = true; }
         float dt = Mathf.Max(Time.deltaTime, 1e-4f);
 
@@ -172,6 +192,13 @@ public class Player : MonoBehaviour
         // moving away from it reads as a backpedal, and one shuffling sideways strafes.
         Vector3 worldVel = (transform.position - lastAnimPos) / dt;
         lastAnimPos = transform.position;
+
+        // Capture the running velocity (flat) so jumps and dives can carry momentum. Only
+        // while grounded/steering — not mid-action, or we'd record the action's own motion
+        // as "run speed".
+        if (!Busy) groundVelocity = new Vector3(worldVel.x, 0f, worldVel.z);
+
+        if (animator == null) return;
         Vector3 local = transform.InverseTransformDirection(worldVel);
 
         // Damped so the blend eases between clips instead of snapping.
@@ -185,35 +212,52 @@ public class Player : MonoBehaviour
         if (animator != null) animator.SetTrigger("Throw");
     }
 
-    /// <summary>Drive the dive: a quick committed lunge with extended reach, then a
-    /// brief lockout while getting up. Movement is transform-only (no physics), like the
-    /// rest of the game, so the diver stays at standing height and just slides along the
-    /// dive line — the animation sells the layout.</summary>
+    /// <summary>Drive the jump and layout arcs each frame. Both are transform-only (no
+    /// physics body) but use real ballistics for feel: the jump is a parabola with
+    /// asymmetric gravity and carried momentum; the layout pops out, arcs down to lay flat,
+    /// then slides to a stop and gets up.</summary>
     void Update()
     {
-        // Layout: lunge along the dive line, then a ground recovery.
+        float dt = Time.deltaTime;
+
+        // Layout: an arcing dive. Pop out and down to lay flat near the turf carrying forward
+        // momentum, then a ground recovery that slides to a stop and stands back up. The
+        // extended reach (CatchReach) is live for the whole lunge.
         if (extendTimer > 0f)
         {
-            extendTimer -= Time.deltaTime;
-            transform.position += diveDir * diveSpeed * Time.deltaTime;
-            if (extendTimer <= 0f) recoverTimer = diveRecover;   // hit the ground → get up
+            extendTimer -= dt;
+            airVel = Vector3.MoveTowards(airVel, Vector3.zero, diveFriction * dt);   // decelerating lunge
+            vertVel -= diveGravity * dt;
+            Vector3 p = transform.position + airVel * dt;
+            p.y = Mathf.Max(p.y + vertVel * dt, layoutHeight);   // arc down, lay flat on the ground
+            transform.position = p;
+            if (extendTimer <= 0f) recoverTimer = diveRecover;   // landed → slide out / get up
         }
         else if (recoverTimer > 0f)
         {
-            recoverTimer -= Time.deltaTime;
+            recoverTimer -= dt;
+            airVel = Vector3.MoveTowards(airVel, Vector3.zero, diveFriction * dt);   // slide out
+            Vector3 p = transform.position + airVel * dt;
+            p.y = Mathf.MoveTowards(p.y, groundY,
+                                    (groundY - layoutHeight) / Mathf.Max(diveRecover, 0.01f) * dt);
+            transform.position = p;
+            if (recoverTimer <= 0f) { p = transform.position; p.y = groundY; transform.position = p; }
         }
 
-        if (fakeTimer > 0f) fakeTimer -= Time.deltaTime;   // the bite wears off
+        if (fakeTimer > 0f) fakeTimer -= dt;   // the bite wears off
 
-        // Jump: a sine arc up and back down. Pure vertical (steering is locked), so the
-        // raised transform lifts the catch point to sky a high disc.
-        if (jumpTimer > 0f)
+        // Jump: a real parabola with asymmetric gravity (slower rise, faster fall) and the
+        // running momentum carried in, so the raised body skies a high disc — and you can do
+        // it on the move instead of from a standstill.
+        if (airborne)
         {
-            jumpTimer -= Time.deltaTime;
-            float t = Mathf.Clamp01(1f - jumpTimer / jumpDuration);   // 0 → 1 over the hop
-            var p = transform.position;
-            p.y = jumpBaseY + jumpHeight * Mathf.Sin(Mathf.PI * t);
-            if (jumpTimer <= 0f) p.y = jumpBaseY;                     // settle exactly on land
+            float g = vertVel > 0f
+                ? 2f * jumpHeight / (jumpRise * jumpRise)    // rise: gentle
+                : 2f * jumpHeight / (jumpFall * jumpFall);   // fall: faster
+            vertVel -= g * dt;
+            Vector3 p = transform.position + airVel * dt;    // drift with momentum
+            p.y += vertVel * dt;
+            if (p.y <= groundY) { p.y = groundY; airborne = false; vertVel = 0f; airVel = Vector3.zero; }
             transform.position = p;
         }
     }
@@ -223,8 +267,10 @@ public class Player : MonoBehaviour
     public void Jump()
     {
         if (Busy) return;
-        jumpBaseY = transform.position.y;
-        jumpTimer = jumpDuration;
+        groundY = transform.position.y;
+        vertVel = 2f * jumpHeight / Mathf.Max(jumpRise, 0.01f);   // instant launch velocity
+        airVel  = groundVelocity * jumpMomentum;                  // carry the run into the air
+        airborne = true;
         if (animator != null) animator.SetTrigger("Jump");
     }
 
@@ -249,6 +295,12 @@ public class Player : MonoBehaviour
         dir.y = 0f;
         diveDir = dir.sqrMagnitude > 1e-4f ? dir.normalized : transform.forward;
         transform.rotation = Quaternion.LookRotation(diveDir);   // commit to the dive line
+        groundY = transform.position.y;
+        // Launch along the dive line at full lunge speed, plus the part of your run that's
+        // already heading that way (carry momentum), with an upward pop so it arcs out flat.
+        float along = Mathf.Max(0f, Vector3.Dot(groundVelocity, diveDir));
+        airVel  = diveDir * (diveSpeed + along * diveMomentum);
+        vertVel = diveLift;
         extendTimer = diveExtend;
         if (animator != null) animator.SetTrigger("Dive");
     }

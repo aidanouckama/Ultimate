@@ -163,11 +163,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HumanController
   cam: {fileID: 991107224}
-  fullPowerDragFraction: 0.35
+  fakeTime: 0.18
+  chargeTime: 0.9
   minThrowSpeed: 10
   maxThrowSpeed: 27
   loftBase: 2.5
-  loftScale: 4
+  pitchLoft: 0.7
+  stepDistance: 1.3
+  stepTime: 0.15
+  maxCurveSpin: 1.4
+  curveChargeRate: 2.2
+  hintFraction: 0.6
+  curveArc: 6
+  previewPower: 0.5
 --- !u!114 &192229237
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -186,7 +194,11 @@ MonoBehaviour:
   humanTeam: 0
   scoreHome: 0
   scoreAway: 0
+  humanPlayer: {fileID: 0}
   stallSeconds: 8
+  stallRadius: 3.5
+  forceSign: 1
+  pickupRadius: 1.6
   statusLine: 
 --- !u!4 &192229238
 Transform:
@@ -695,9 +707,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ecc57ba566e120d4682784811e737f4a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CameraRig
-  offset: {x: 0, y: 30, z: -26}
-  followLerp: 4
-  lookLerp: 6
+  distance: 7
+  handlerDistance: 13
+  shoulderOffset: 2.6
+  shoulderHeight: 0.25
+  pivotHeight: 1.4
+  restElevation: 16
+  aimFollow: 0.5
+  maxElevation: 35
+  groundClearance: 0.6
+  lookUpFollow: 0.03
+  lookForward: 2.5
+  followDamping: 0.14
+  aimLerp: 11
+  mouseSensitivity: 0.15
+  pitchSensitivity: 0.12
+  minAimPitch: -15
+  maxAimPitch: 55
 --- !u!81 &991107226
 AudioListener:
   m_ObjectHideFlags: 0
@@ -902,6 +928,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1603765860}
   - component: {fileID: 1603765859}
+  - component: {fileID: 1603765861}
   m_Layer: 0
   m_Name: Directional Light
   m_TagString: Untagged
@@ -989,6 +1016,35 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &1603765861
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1603765858}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
+  m_UsePipelineSettings: 1
+  m_AdditionalLightsShadowResolutionTier: 2
+  m_CustomShadowLayers: 0
+  m_LightCookieSize: {x: 1, y: 1}
+  m_LightCookieOffset: {x: 0, y: 0}
+  m_SoftShadowQuality: 0
+  m_RenderingLayersMask:
+    serializedVersion: 0
+    m_Bits: 1
+  m_ShadowRenderingLayersMask:
+    serializedVersion: 0
+    m_Bits: 1
+  m_Version: 4
+  m_LightLayerMask: 1
+  m_ShadowLayerMask: 1
+  m_RenderingLayers: 1
+  m_ShadowRenderingLayers: 1
 --- !u!1001 &1731303959
 PrefabInstance:
   m_ObjectHideFlags: 0
